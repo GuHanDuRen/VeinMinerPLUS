@@ -33,6 +33,15 @@ public final class VeinMinerPlusClient {
         event.register(CHAIN_KEY);
     }
 
+    static void openConfigScreen(NetworkHandler.ConfigSnapshotPayload config) {
+        clientMode = ChainMode.fromOrdinal(config.mode());
+        Minecraft.getInstance().setScreen(new VeinMinerConfigScreen(config));
+    }
+
+    static void setClientMode(ChainMode mode) {
+        clientMode = mode;
+    }
+
     static void syncKeyState() {
         boolean held = isChainKeyActive(Minecraft.getInstance()) && !Screen.hasShiftDown();
         if (held == keyStateSent) {

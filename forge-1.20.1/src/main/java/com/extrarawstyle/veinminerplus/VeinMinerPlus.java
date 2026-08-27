@@ -6,6 +6,7 @@ import com.mojang.logging.LogUtils;
 
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.ModLoadingContext;
+import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig;
 
@@ -15,6 +16,7 @@ public class VeinMinerPlus {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public VeinMinerPlus() {
+        ModEffects.register(FMLJavaModLoadingContext.get().getModEventBus());
         NetworkHandler.register();
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, Config.SPEC);
         MinecraftForge.EVENT_BUS.register(new ChainEvents());

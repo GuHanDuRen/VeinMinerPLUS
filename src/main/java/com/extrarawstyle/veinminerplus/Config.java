@@ -22,8 +22,28 @@ public final class Config {
             .defineInRange("maxBlastBlocksPerTick", 64, 1, 512);
 
     public static final ModConfigSpec.IntValue BLAST_SEARCH_DISTANCE = BUILDER
-            .comment("Maximum Euclidean radius searched from each found block in blast modes. Range: 3-128.")
+            .comment("Maximum blast search distance from each found block. Range: 3-128.")
             .defineInRange("blastSearchDistance", 20, 3, 128);
+
+    public static final ModConfigSpec.BooleanValue BLAST_MANHATTAN = BUILDER
+            .comment("Use Manhattan distance instead of spherical distance for blast searches.")
+            .define("blastManhattan", true);
+
+    public static final ModConfigSpec.IntValue DEFAULT_MODE = BUILDER
+            .comment("Default chain mode ordinal used for players without a session override. Range: 0-6.")
+            .defineInRange("defaultMode", 0, 0, 6);
+
+    public static final ModConfigSpec.IntValue BLAST_LOW_TPS_THRESHOLD = BUILDER
+            .comment("Warn when server TPS falls below this value during blast mining. Range: 5-20.")
+            .defineInRange("blastLowTpsThreshold", 15, 5, 20);
+
+    public static final ModConfigSpec.BooleanValue BLAST_AUTO_REDUCE_RADIUS = BUILDER
+            .comment("Automatically reduce the active blast radius when server TPS is too low.")
+            .define("blastAutoReduceRadius", true);
+
+    public static final ModConfigSpec.BooleanValue CONSUME_HUNGER = BUILDER
+            .comment("Whether chain mining consumes hunger. Disabled by default.")
+            .define("consumeHunger", false);
 
     static final ModConfigSpec SPEC = BUILDER.build();
 
