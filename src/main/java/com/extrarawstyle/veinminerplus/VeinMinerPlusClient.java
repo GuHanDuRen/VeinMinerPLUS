@@ -58,6 +58,15 @@ public final class VeinMinerPlusClient {
         }
     }
 
+    static void openConfigScreen(NetworkHandler.ConfigSnapshotPayload config) {
+        clientMode = ChainMode.fromOrdinal(config.mode());
+        Minecraft.getInstance().setScreen(new VeinMinerConfigScreen(config));
+    }
+
+    static void setClientMode(ChainMode mode) {
+        clientMode = mode;
+    }
+
     @SubscribeEvent
     public static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
         if (!isModeSelectorOpen() || event.getScrollDeltaY() == 0.0D) {

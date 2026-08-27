@@ -4,11 +4,13 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "2";
 
     private NetworkHandler() {
     }
@@ -19,6 +21,14 @@ public final class NetworkHandler {
                 (payload, context) -> context.enqueueWork(() -> ChainEvents.setKeyHeld(context.player(), payload.held())));
         registrar.playToServer(ModeChangePayload.TYPE, ModeChangePayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> ChainEvents.setMode(context.player(), payload.mode())));
+        registrar.playToClient(ConfigSnapshotPayload.TYPE, ConfigSnapshotPayload.STREAM_CODEC,
+                (payload, context) -> context.enqueueWork(() -> VeinMinerPlusClient.openConfigScreen(payload)));
+        registrar.playToServer(ConfigUpdatePayload.TYPE, ConfigUpdatePayload.STREAM_CODEC,
+                (payload, context) -> context.enqueueWork(() -> {
+                    if (context.player() instanceof ServerPlayer player && player.hasPermissions(2)) {
+                        applyConfig(player, payload);
+                    }
+                }));
     }
 
     static void sendKeyState(boolean held) {
@@ -27,6 +37,31 @@ public final class NetworkHandler {
 
     static void sendModeChange(ChainMode mode) {
         PacketDistributor.sendToServer(new ModeChangePayload(mode.ordinal()));
+    }
+
+    static void openConfigScreen(ServerPlayer player) {
+        PacketDistributor.sendToPlayer(player, ConfigSnapshotPayload.current(player));
+    }
+
+    static void sendConfigUpdate(ConfigUpdatePayload payload) {
+        PacketDistributor.sendToServer(payload);
+    }
+
+    private static void applyConfig(ServerPlayer player, ConfigUpdatePayload payload) {
+        Config.MAX_NORMAL_BLOCKS.set(Mth.clamp(payload.maxNormalBlocks(), 32, 32767));
+        Config.MAX_NORMAL_BLOCKS_PER_TICK.set(Mth.clamp(payload.maxNormalBlocksPerTick(), 1, 384));
+        Config.MAX_BLAST_BLOCKS.set(Mth.clamp(payload.maxBlastBlocks(), 32, 32767));
+        Config.MAX_BLAST_BLOCKS_PER_TICK.set(Mth.clamp(payload.maxBlastBlocksPerTick(), 1, 512));
+        Config.BLAST_SEARCH_DISTANCE.set(Mth.clamp(payload.blastSearchDistance(), 3, 128));
+        Config.BLAST_LOW_TPS_THRESHOLD.set(Mth.clamp(payload.blastLowTpsThreshold(), 5, 20));
+        Config.BLAST_MANHATTAN.set(payload.blastManhattan());
+        Config.BLAST_AUTO_REDUCE_RADIUS.set(payload.blastAutoReduceRadius());
+        Config.CONSUME_HUNGER.set(payload.consumeHunger());
+        Config.DEFAULT_MODE.set(Mth.clamp(payload.mode(), 0, ChainMode.values().length - 1));
+        ChainEvents.setMode(player, payload.mode());
+        Config.SPEC.save();
+        player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.veinminerplus.config_saved"), false);
     }
 
     public record KeyStatePayload(boolean held) implements CustomPacketPayload {
@@ -53,5 +88,99 @@ public final class NetworkHandler {
         public Type<? extends CustomPacketPayload> type() {
             return TYPE;
         }
+    }
+
+    public record ConfigSnapshotPayload(int maxNormalBlocks, int maxNormalBlocksPerTick,
+            int maxBlastBlocks, int maxBlastBlocksPerTick, int blastSearchDistance,
+            int blastLowTpsThreshold, boolean blastManhattan, boolean blastAutoReduceRadius,
+            boolean consumeHunger, int mode) implements CustomPacketPayload {
+        public static final Type<ConfigSnapshotPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "config_snapshot"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, ConfigSnapshotPayload> STREAM_CODEC = StreamCodec.of(
+                NetworkHandler::writeConfigSnapshot, NetworkHandler::readConfigSnapshot);
+
+        static ConfigSnapshotPayload current(ServerPlayer player) {
+            return new ConfigSnapshotPayload(Config.MAX_NORMAL_BLOCKS.getAsInt(),
+                    Config.MAX_NORMAL_BLOCKS_PER_TICK.getAsInt(), Config.MAX_BLAST_BLOCKS.getAsInt(),
+                    Config.MAX_BLAST_BLOCKS_PER_TICK.getAsInt(), Config.BLAST_SEARCH_DISTANCE.getAsInt(),
+                    Config.BLAST_LOW_TPS_THRESHOLD.getAsInt(), Config.BLAST_MANHATTAN.getAsBoolean(),
+                    Config.BLAST_AUTO_REDUCE_RADIUS.getAsBoolean(), Config.CONSUME_HUNGER.getAsBoolean(),
+                    ChainEvents.getMode(player).ordinal());
+        }
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record ConfigUpdatePayload(int maxNormalBlocks, int maxNormalBlocksPerTick,
+            int maxBlastBlocks, int maxBlastBlocksPerTick, int blastSearchDistance,
+            int blastLowTpsThreshold, boolean blastManhattan, boolean blastAutoReduceRadius,
+            boolean consumeHunger, int mode) implements CustomPacketPayload {
+        public static final Type<ConfigUpdatePayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "config_update"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, ConfigUpdatePayload> STREAM_CODEC = StreamCodec.of(
+                NetworkHandler::writeConfigUpdate, NetworkHandler::readConfigUpdate);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    private static void writeConfigSnapshot(RegistryFriendlyByteBuf buffer, ConfigSnapshotPayload payload) {
+        writeConfig(buffer, payload.maxNormalBlocks(), payload.maxNormalBlocksPerTick(), payload.maxBlastBlocks(),
+                payload.maxBlastBlocksPerTick(), payload.blastSearchDistance(), payload.blastLowTpsThreshold(),
+                payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode());
+    }
+
+    private static ConfigSnapshotPayload readConfigSnapshot(RegistryFriendlyByteBuf buffer) {
+        ConfigValues values = readConfig(buffer);
+        return new ConfigSnapshotPayload(values.maxNormalBlocks(), values.maxNormalBlocksPerTick(),
+                values.maxBlastBlocks(), values.maxBlastBlocksPerTick(), values.blastSearchDistance(),
+                values.blastLowTpsThreshold(), values.blastManhattan(), values.blastAutoReduceRadius(),
+                values.consumeHunger(), values.mode());
+    }
+
+    private static void writeConfigUpdate(RegistryFriendlyByteBuf buffer, ConfigUpdatePayload payload) {
+        writeConfig(buffer, payload.maxNormalBlocks(), payload.maxNormalBlocksPerTick(), payload.maxBlastBlocks(),
+                payload.maxBlastBlocksPerTick(), payload.blastSearchDistance(), payload.blastLowTpsThreshold(),
+                payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode());
+    }
+
+    private static ConfigUpdatePayload readConfigUpdate(RegistryFriendlyByteBuf buffer) {
+        ConfigValues values = readConfig(buffer);
+        return new ConfigUpdatePayload(values.maxNormalBlocks(), values.maxNormalBlocksPerTick(),
+                values.maxBlastBlocks(), values.maxBlastBlocksPerTick(), values.blastSearchDistance(),
+                values.blastLowTpsThreshold(), values.blastManhattan(), values.blastAutoReduceRadius(),
+                values.consumeHunger(), values.mode());
+    }
+
+    private static void writeConfig(RegistryFriendlyByteBuf buffer, int maxNormalBlocks,
+            int maxNormalBlocksPerTick, int maxBlastBlocks, int maxBlastBlocksPerTick,
+            int blastSearchDistance, int blastLowTpsThreshold, boolean blastManhattan,
+            boolean blastAutoReduceRadius, boolean consumeHunger, int mode) {
+        buffer.writeVarInt(maxNormalBlocks);
+        buffer.writeVarInt(maxNormalBlocksPerTick);
+        buffer.writeVarInt(maxBlastBlocks);
+        buffer.writeVarInt(maxBlastBlocksPerTick);
+        buffer.writeVarInt(blastSearchDistance);
+        buffer.writeVarInt(blastLowTpsThreshold);
+        buffer.writeBoolean(blastManhattan);
+        buffer.writeBoolean(blastAutoReduceRadius);
+        buffer.writeBoolean(consumeHunger);
+        buffer.writeVarInt(mode);
+    }
+
+    private static ConfigValues readConfig(RegistryFriendlyByteBuf buffer) {
+        return new ConfigValues(buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(),
+                buffer.readVarInt(), buffer.readVarInt(), buffer.readBoolean(), buffer.readBoolean(),
+                buffer.readBoolean(), buffer.readVarInt());
+    }
+
+    private record ConfigValues(int maxNormalBlocks, int maxNormalBlocksPerTick, int maxBlastBlocks,
+            int maxBlastBlocksPerTick, int blastSearchDistance, int blastLowTpsThreshold,
+            boolean blastManhattan, boolean blastAutoReduceRadius, boolean consumeHunger, int mode) {
     }
 }
