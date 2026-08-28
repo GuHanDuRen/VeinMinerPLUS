@@ -21,6 +21,11 @@ public final class VeinMinerPlusClient {
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_GRAVE_ACCENT,
             "key.categories.veinminerplus");
+    static final KeyMapping CONFIG_KEY = new KeyMapping(
+            "key.veinminerplus.config",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_A,
+            "key.categories.veinminerplus");
 
     static ChainMode clientMode = ChainMode.NORMAL;
     private static boolean keyStateSent;
@@ -31,6 +36,7 @@ public final class VeinMinerPlusClient {
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(CHAIN_KEY);
+        event.register(CONFIG_KEY);
     }
 
     static void openConfigScreen(NetworkHandler.ConfigSnapshotPayload config) {

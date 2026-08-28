@@ -140,6 +140,10 @@ public final class ChainEvents {
             return;
         }
 
+        // Keep the chain bound to the tool stack that started it. Inventory
+        // auto-refill can otherwise replace the stack between server ticks.
+        ItemStack toolStack = player.getMainHandItem();
+
         BreakFace breakFace = LAST_BREAK_FACES.get(player.getUUID());
         Direction face = breakFace != null && breakFace.pos().equals(target) ? breakFace.face() : Direction.UP;
         DropBuffer drops = new DropBuffer();
@@ -148,7 +152,8 @@ public final class ChainEvents {
         PENDING_JOBS.add(player.getUUID());
         PENDING_JOBS.remove(player.getUUID());
         HungerSnapshot hungerBefore = HUNGER_STARTS.remove(player.getUUID());
-        ChainJob job = new ChainJob(level, player, target, state.getBlock(), face, mode, drops, hungerBefore);
+        ChainJob job = new ChainJob(level, player, target, state.getBlock(), face, mode, drops, hungerBefore,
+                toolStack);
         ACTIVE_JOBS.put(player.getUUID(), job);
         job.refreshHungerStatus();
         showProgress(player, 1);
@@ -239,7 +244,15 @@ public final class ChainEvents {
 
     private static boolean isEligible(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
             Block targetBlock, ChainMode mode) {
+        return isEligible(level, player, pos, state, targetBlock, mode, configuredWhitelist());
+    }
+
+    private static boolean isEligible(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
+            Block targetBlock, ChainMode mode, Set<String> whitelist) {
         if (state.isAir() || !level.mayInteract(player, pos)) {
+            return false;
+        }
+        if (!isWhitelisted(state, whitelist)) {
             return false;
         }
 
@@ -255,6 +268,63 @@ public final class ChainEvents {
                 && (player.isCreative() || ForgeHooks.isCorrectToolForDrops(state, player));
     }
 
+    private static Set<String> configuredWhitelist() {
+        return Collections.unmodifiableSet(new LinkedHashSet<>(
+                Config.effectiveWhitelist(Config.BLOCK_WHITELIST.get())));
+    }
+
+    private static boolean isWhitelisted(BlockState state, Set<String> whitelist) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        if (whitelist.isEmpty()) {
+            return true;
+        }
+        if (id == null) {
+            return false;
+        }
+        for (String rule : whitelist) {
+            if (rule.startsWith("#")) {
+                ResourceLocation tagId = ResourceLocation.tryParse(rule.substring(1));
+                if (tagId != null && state.is(TagKey.create(Registries.BLOCK, tagId))) {
+                    return true;
+                }
+            } else if (rule.indexOf('*') >= 0) {
+                String candidate = rule.indexOf(':') >= 0 ? id.toString() : id.getPath();
+                if (wildcardMatches(rule, candidate)) {
+                    return true;
+                }
+            } else if (rule.equals(id.toString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean wildcardMatches(String pattern, String value) {
+        int patternIndex = 0;
+        int valueIndex = 0;
+        int starIndex = -1;
+        int retryIndex = 0;
+        while (valueIndex < value.length()) {
+            if (patternIndex < pattern.length()
+                    && pattern.charAt(patternIndex) == value.charAt(valueIndex)) {
+                patternIndex++;
+                valueIndex++;
+            } else if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+                starIndex = patternIndex++;
+                retryIndex = valueIndex;
+            } else if (starIndex >= 0) {
+                patternIndex = starIndex + 1;
+                valueIndex = ++retryIndex;
+            } else {
+                return false;
+            }
+        }
+        while (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+            patternIndex++;
+        }
+        return patternIndex == pattern.length();
+    }
+
     private static boolean isContainer(ServerLevel level, BlockPos pos, BlockState state) {
         BlockEntity blockEntity = level.getBlockEntity(pos);
         return blockEntity instanceof Container
@@ -268,13 +338,14 @@ public final class ChainEvents {
         }
 
         // Some mod packs do not add their ores to the shared ore tags.
-        return BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath().endsWith("_ore");
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        return id != null && id.getPath().endsWith("_ore");
     }
 
     private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,
-            ChainMode mode) {
+            ChainMode mode, Set<String> whitelist) {
         BlockState state = level.getBlockState(pos);
-        if (!isEligible(level, player, pos, state, targetBlock, mode)) {
+        if (!isEligible(level, player, pos, state, targetBlock, mode, whitelist)) {
             return false;
         }
         // Use the same server-side entry point as a real player break. This keeps
@@ -449,6 +520,7 @@ public final class ChainEvents {
         private final Block targetBlock;
         private final Direction face;
         private final ChainMode mode;
+        private final ItemStack toolStack;
         private final Set<BlockPos> examined = new HashSet<>();
         private final Deque<SearchNode> frontier = new ArrayDeque<>();
         private final Deque<BlockPos> sparseCenters = new ArrayDeque<>();
@@ -461,6 +533,7 @@ public final class ChainEvents {
         private final boolean sparseBlast;
         private final boolean blastManhattan;
         private final DropBuffer drops;
+        private final Set<String> whitelist;
         private int blastDistance;
         private boolean lowTpsWarned;
         private final HungerSnapshot hungerSnapshot;
@@ -470,7 +543,8 @@ public final class ChainEvents {
         private int areaIndex;
 
         private ChainJob(ServerLevel level, ServerPlayer player, BlockPos origin, Block targetBlock,
-                Direction face, ChainMode mode, DropBuffer drops, HungerSnapshot hungerBefore) {
+                Direction face, ChainMode mode, DropBuffer drops, HungerSnapshot hungerBefore,
+                ItemStack toolStack) {
             this.level = level;
             this.player = player;
             this.origin = origin;
@@ -478,6 +552,8 @@ public final class ChainEvents {
             this.face = face;
             this.mode = mode;
             this.drops = drops;
+            this.toolStack = toolStack;
+            this.whitelist = configuredWhitelist();
             this.hungerSnapshot = !Config.CONSUME_HUNGER.get() && !player.isCreative()
                     ? hungerBefore == null ? HungerSnapshot.capture(player) : hungerBefore
                     : null;
@@ -512,6 +588,10 @@ public final class ChainEvents {
         private void tick() {
             PENDING_DROPS.remove(player.getUUID(), drops);
             PENDING_DROP_ORIGINS.remove(player.getUUID(), origin);
+            if (!isToolUnchanged()) {
+                finish();
+                return;
+            }
             if (level.getBlockState(origin).is(targetBlock)) {
                 finish();
                 return;
@@ -535,6 +615,10 @@ public final class ChainEvents {
             }
         }
 
+        private boolean isToolUnchanged() {
+            return player.getMainHandItem() == toolStack;
+        }
+
         private void tickGraph() {
             int checks = 0;
             int breaks = 0;
@@ -543,7 +627,7 @@ public final class ChainEvents {
                     : BLOCK_BREAKS_PER_TICK;
             while (checks < SEARCH_CHECKS_PER_TICK && breaks < breakLimit
                     && !frontier.isEmpty() && brokenCount < totalLimit
-                    && HELD_KEYS.contains(player.getUUID())) {
+                    && HELD_KEYS.contains(player.getUUID()) && isToolUnchanged()) {
                 SearchNode node = frontier.removeFirst();
                 int centerChecks = 0;
                 while (centerChecks < SEARCH_CHECKS_PER_CENTER
@@ -560,8 +644,8 @@ public final class ChainEvents {
                     }
 
                     BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
-                    if (isEligible(level, player, candidate, state, targetBlock, mode)
-                            && breakOne(level, player, candidate, targetBlock, mode)) {
+                    if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
+                            && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
                         brokenCount++;
                         breaks++;
                         frontier.addLast(new SearchNode(candidate, 0));
@@ -576,7 +660,8 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
 
-            if (!HELD_KEYS.contains(player.getUUID()) || frontier.isEmpty() || brokenCount >= totalLimit) {
+            if (!isToolUnchanged() || !HELD_KEYS.contains(player.getUUID()) || frontier.isEmpty()
+                    || brokenCount >= totalLimit) {
                 finish();
             }
         }
@@ -586,7 +671,7 @@ public final class ChainEvents {
             int planeSize = size * size;
             int breaks = 0;
             while (breaks < BLOCK_BREAKS_PER_TICK && areaDepth <= areaDepthLimit
-                    && HELD_KEYS.contains(player.getUUID())) {
+                    && HELD_KEYS.contains(player.getUUID()) && isToolUnchanged()) {
                 if (areaIndex >= planeSize) {
                     areaDepth++;
                     areaIndex = 0;
@@ -604,8 +689,8 @@ public final class ChainEvents {
                 }
 
                 BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
-                if (isEligible(level, player, candidate, state, targetBlock, mode)
-                        && breakOne(level, player, candidate, targetBlock, mode)) {
+                if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
+                        && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
                     brokenCount++;
                     breaks++;
                 }
@@ -615,7 +700,7 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
 
-            if (!HELD_KEYS.contains(player.getUUID()) || areaDepth > areaDepthLimit) {
+            if (!isToolUnchanged() || !HELD_KEYS.contains(player.getUUID()) || areaDepth > areaDepthLimit) {
                 finish();
             }
         }
@@ -625,7 +710,8 @@ public final class ChainEvents {
             int scannedCenters = 0;
             int breakLimit = Config.MAX_BLAST_BLOCKS_PER_TICK.get();
             int centerLimit = Math.max(32, breakLimit);
-            while (breaks < breakLimit && brokenCount < totalLimit && HELD_KEYS.contains(player.getUUID())) {
+            while (breaks < breakLimit && brokenCount < totalLimit && HELD_KEYS.contains(player.getUUID())
+                    && isToolUnchanged()) {
                 while (sparseTargets.isEmpty() && !sparseCenters.isEmpty() && scannedCenters < centerLimit) {
                     scanSparseCenter(sparseCenters.removeFirst());
                     scannedCenters++;
@@ -636,8 +722,8 @@ public final class ChainEvents {
 
                 BlockPos candidate = sparseTargets.poll();
                 BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
-                if (isEligible(level, player, candidate, state, targetBlock, mode)
-                        && breakOne(level, player, candidate, targetBlock, mode)) {
+                if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
+                        && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
                     brokenCount++;
                     breaks++;
                     sparseCenters.addLast(candidate);
@@ -647,7 +733,7 @@ public final class ChainEvents {
             if (breaks > 0) {
                 showProgress(player, brokenCount);
             }
-            if (!HELD_KEYS.contains(player.getUUID())
+            if (!isToolUnchanged() || !HELD_KEYS.contains(player.getUUID())
                     || sparseTargets.isEmpty() && sparseCenters.isEmpty()
                     || brokenCount >= totalLimit) {
                 finish();
@@ -709,7 +795,7 @@ public final class ChainEvents {
         }
 
         private boolean matchesSparseState(BlockState state) {
-            return switch (mode) {
+            return isWhitelisted(state, whitelist) && switch (mode) {
                 case BLAST_ORES -> isOre(state);
                 case BLAST_LOGS -> state.is(BlockTags.LOGS);
                 default -> state.is(targetBlock);

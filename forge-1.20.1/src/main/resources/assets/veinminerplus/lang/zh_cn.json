@@ -1,5 +1,6 @@
 {
   "key.veinminerplus.chain": "连锁挖掘",
+  "key.veinminerplus.config": "打开 VeinMinerPlus 设置",
   "key.categories.veinminerplus": "VeinMinerPlus",
   "effect.veinminerplus.chain_saturation": "连锁饱腹",
   "chain.veinminerplus.normal": "普通连锁",
@@ -57,7 +58,11 @@
   "screen.veinminerplus.config.section.performance": "性能保护",
   "screen.veinminerplus.config.section.player": "玩家行为",
   "screen.veinminerplus.config.consume_hunger": "消耗饱食度",
+  "screen.veinminerplus.config.whitelist": "方块白名单",
+  "screen.veinminerplus.config.whitelist.description": "支持方块 ID、* 通配符和 #方块标签；用逗号、分号或换行分隔。+ 添加准星方块的矿物标签；- 移除其矿物标签和精确 ID，无准星方块时移除最后一条规则。",
+  "screen.veinminerplus.config.reset_defaults": "恢复默认设置",
   "screen.veinminerplus.config.auto_radius": "低 TPS 自动降半径",
   "screen.veinminerplus.config.range": "[%s-%s]",
-  "message.veinminerplus.config_saved": "VeinMinerPlus 配置已保存"
+  "message.veinminerplus.config_saved": "VeinMinerPlus 配置已保存",
+  "message.veinminerplus.config_permission": "需要权限等级 2 才能打开 VeinMinerPlus 设置"
 }
