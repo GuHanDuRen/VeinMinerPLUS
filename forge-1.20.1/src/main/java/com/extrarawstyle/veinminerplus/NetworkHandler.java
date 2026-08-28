@@ -6,6 +6,7 @@ import java.util.function.Supplier;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
+import net.minecraft.network.chat.Component;
 import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.NetworkRegistry;
@@ -13,7 +14,8 @@ import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.simple.SimpleChannel;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "2";
+    private static final String PROTOCOL_VERSION = "3";
+    static final int MAX_WHITELIST_TEXT_LENGTH = 4096;
     private static int packetId;
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "main"),
@@ -35,6 +37,12 @@ public final class NetworkHandler {
                 buffer -> new ModeChangePayload(buffer.readVarInt()),
                 NetworkHandler::handleModeChange,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++, ConfigRequestPayload.class,
+                (payload, buffer) -> {
+                },
+                buffer -> new ConfigRequestPayload(),
+                NetworkHandler::handleConfigRequest,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
         CHANNEL.registerMessage(packetId++, ConfigSnapshotPayload.class,
                 NetworkHandler::writeConfigSnapshot, NetworkHandler::readConfigSnapshot,
                 NetworkHandler::handleConfigSnapshot, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
@@ -49,6 +57,10 @@ public final class NetworkHandler {
 
     static void sendModeChange(ChainMode mode) {
         CHANNEL.sendToServer(new ModeChangePayload(mode.ordinal()));
+    }
+
+    static void requestConfigScreen() {
+        CHANNEL.sendToServer(new ConfigRequestPayload());
     }
 
     static void openConfigScreen(ServerPlayer player) {
@@ -102,11 +114,30 @@ public final class NetworkHandler {
                 Config.BLAST_MANHATTAN.set(payload.blastManhattan());
                 Config.BLAST_AUTO_REDUCE_RADIUS.set(payload.blastAutoReduceRadius());
                 Config.CONSUME_HUNGER.set(payload.consumeHunger());
+                Config.BLOCK_WHITELIST.set(Config.parseWhitelistText(payload.blockWhitelist()));
                 Config.DEFAULT_MODE.set(Mth.clamp(payload.mode(), 0, ChainMode.values().length - 1));
                 ChainEvents.setMode(player, payload.mode());
                 Config.SPEC.save();
                 player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "message.veinminerplus.config_saved"), false);
+            }
+        });
+        context.setPacketHandled(true);
+    }
+
+    private static void handleConfigRequest(ConfigRequestPayload payload,
+            Supplier<NetworkEvent.Context> supplier) {
+        NetworkEvent.Context context = supplier.get();
+        context.enqueueWork(() -> {
+            ServerPlayer player = context.getSender();
+            if (player == null) {
+                return;
+            }
+            if (player.hasPermissions(2)) {
+                openConfigScreen(player);
+            } else {
+                player.displayClientMessage(Component.translatable(
+                        "message.veinminerplus.config_permission"), true);
             }
         });
         context.setPacketHandled(true);
@@ -118,29 +149,33 @@ public final class NetworkHandler {
     private record ModeChangePayload(int mode) {
     }
 
+    private record ConfigRequestPayload() {
+    }
+
     public record ConfigSnapshotPayload(int maxNormalBlocks, int maxNormalBlocksPerTick,
             int maxBlastBlocks, int maxBlastBlocksPerTick, int blastSearchDistance,
             int blastLowTpsThreshold, boolean blastManhattan, boolean blastAutoReduceRadius,
-            boolean consumeHunger, int mode) {
+            boolean consumeHunger, int mode, String blockWhitelist) {
         static ConfigSnapshotPayload current(ServerPlayer player) {
             return new ConfigSnapshotPayload(Config.MAX_NORMAL_BLOCKS.get(), Config.MAX_NORMAL_BLOCKS_PER_TICK.get(),
                     Config.MAX_BLAST_BLOCKS.get(), Config.MAX_BLAST_BLOCKS_PER_TICK.get(),
                     Config.BLAST_SEARCH_DISTANCE.get(), Config.BLAST_LOW_TPS_THRESHOLD.get(),
                     Config.BLAST_MANHATTAN.get(), Config.BLAST_AUTO_REDUCE_RADIUS.get(),
-                    Config.CONSUME_HUNGER.get(), ChainEvents.getMode(player).ordinal());
+                    Config.CONSUME_HUNGER.get(), ChainEvents.getMode(player).ordinal(), Config.whitelistText());
         }
     }
 
     public record ConfigUpdatePayload(int maxNormalBlocks, int maxNormalBlocksPerTick,
             int maxBlastBlocks, int maxBlastBlocksPerTick, int blastSearchDistance,
             int blastLowTpsThreshold, boolean blastManhattan, boolean blastAutoReduceRadius,
-            boolean consumeHunger, int mode) {
+            boolean consumeHunger, int mode, String blockWhitelist) {
     }
 
     private static void writeConfigSnapshot(ConfigSnapshotPayload payload, net.minecraft.network.FriendlyByteBuf buffer) {
         writeConfig(buffer, payload.maxNormalBlocks(), payload.maxNormalBlocksPerTick(), payload.maxBlastBlocks(),
                 payload.maxBlastBlocksPerTick(), payload.blastSearchDistance(), payload.blastLowTpsThreshold(),
-                payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode());
+                payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode(),
+                payload.blockWhitelist());
     }
 
     private static ConfigSnapshotPayload readConfigSnapshot(net.minecraft.network.FriendlyByteBuf buffer) {
@@ -148,13 +183,14 @@ public final class NetworkHandler {
         return new ConfigSnapshotPayload(values.maxNormalBlocks(), values.maxNormalBlocksPerTick(),
                 values.maxBlastBlocks(), values.maxBlastBlocksPerTick(), values.blastSearchDistance(),
                 values.blastLowTpsThreshold(), values.blastManhattan(), values.blastAutoReduceRadius(),
-                values.consumeHunger(), values.mode());
+                values.consumeHunger(), values.mode(), values.blockWhitelist());
     }
 
     private static void writeConfigUpdate(ConfigUpdatePayload payload, net.minecraft.network.FriendlyByteBuf buffer) {
         writeConfig(buffer, payload.maxNormalBlocks(), payload.maxNormalBlocksPerTick(), payload.maxBlastBlocks(),
                 payload.maxBlastBlocksPerTick(), payload.blastSearchDistance(), payload.blastLowTpsThreshold(),
-                payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode());
+                payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode(),
+                payload.blockWhitelist());
     }
 
     private static ConfigUpdatePayload readConfigUpdate(net.minecraft.network.FriendlyByteBuf buffer) {
@@ -162,13 +198,13 @@ public final class NetworkHandler {
         return new ConfigUpdatePayload(values.maxNormalBlocks(), values.maxNormalBlocksPerTick(),
                 values.maxBlastBlocks(), values.maxBlastBlocksPerTick(), values.blastSearchDistance(),
                 values.blastLowTpsThreshold(), values.blastManhattan(), values.blastAutoReduceRadius(),
-                values.consumeHunger(), values.mode());
+                values.consumeHunger(), values.mode(), values.blockWhitelist());
     }
 
     private static void writeConfig(net.minecraft.network.FriendlyByteBuf buffer, int maxNormalBlocks,
             int maxNormalBlocksPerTick, int maxBlastBlocks, int maxBlastBlocksPerTick,
             int blastSearchDistance, int blastLowTpsThreshold, boolean blastManhattan,
-            boolean blastAutoReduceRadius, boolean consumeHunger, int mode) {
+            boolean blastAutoReduceRadius, boolean consumeHunger, int mode, String blockWhitelist) {
         buffer.writeVarInt(maxNormalBlocks);
         buffer.writeVarInt(maxNormalBlocksPerTick);
         buffer.writeVarInt(maxBlastBlocks);
@@ -179,16 +215,18 @@ public final class NetworkHandler {
         buffer.writeBoolean(blastAutoReduceRadius);
         buffer.writeBoolean(consumeHunger);
         buffer.writeVarInt(mode);
+        buffer.writeUtf(blockWhitelist == null ? "" : blockWhitelist, MAX_WHITELIST_TEXT_LENGTH);
     }
 
     private static ConfigValues readConfig(net.minecraft.network.FriendlyByteBuf buffer) {
         return new ConfigValues(buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(),
                 buffer.readVarInt(), buffer.readVarInt(), buffer.readBoolean(), buffer.readBoolean(),
-                buffer.readBoolean(), buffer.readVarInt());
+                buffer.readBoolean(), buffer.readVarInt(), buffer.readUtf(MAX_WHITELIST_TEXT_LENGTH));
     }
 
     private record ConfigValues(int maxNormalBlocks, int maxNormalBlocksPerTick, int maxBlastBlocks,
             int maxBlastBlocksPerTick, int blastSearchDistance, int blastLowTpsThreshold,
-            boolean blastManhattan, boolean blastAutoReduceRadius, boolean consumeHunger, int mode) {
+            boolean blastManhattan, boolean blastAutoReduceRadius, boolean consumeHunger, int mode,
+            String blockWhitelist) {
     }
 }

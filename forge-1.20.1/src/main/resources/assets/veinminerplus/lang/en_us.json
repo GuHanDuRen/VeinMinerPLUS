@@ -1,5 +1,6 @@
 {
   "key.veinminerplus.chain": "Chain mine",
+  "key.veinminerplus.config": "Open VeinMinerPlus settings",
   "key.categories.veinminerplus": "VeinMinerPlus",
   "effect.veinminerplus.chain_saturation": "Chain Saturation",
   "chain.veinminerplus.normal": "Normal chain",
@@ -57,7 +58,11 @@
   "screen.veinminerplus.config.section.performance": "Performance protection",
   "screen.veinminerplus.config.section.player": "Player behavior",
   "screen.veinminerplus.config.consume_hunger": "Consume hunger",
+  "screen.veinminerplus.config.whitelist": "Block whitelist",
+  "screen.veinminerplus.config.whitelist.description": "Rules support block IDs, * wildcards, and #block tags. Separate with commas, semicolons, or new lines. + adds the aimed block's ore tags; - removes its ore tags and exact ID, or the last rule without a block hit.",
+  "screen.veinminerplus.config.reset_defaults": "Reset defaults",
   "screen.veinminerplus.config.auto_radius": "Auto-reduce blast radius",
   "screen.veinminerplus.config.range": "[%s-%s]",
-  "message.veinminerplus.config_saved": "VeinMinerPlus settings saved"
+  "message.veinminerplus.config_saved": "VeinMinerPlus settings saved",
+  "message.veinminerplus.config_permission": "You need permission level 2 to open VeinMinerPlus settings"
 }

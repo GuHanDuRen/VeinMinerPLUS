@@ -30,6 +30,11 @@ public final class VeinMinerPlusClient {
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_GRAVE_ACCENT,
             "key.categories.veinminerplus");
+    private static final KeyMapping CONFIG_KEY = new KeyMapping(
+            "key.veinminerplus.config",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_A,
+            "key.categories.veinminerplus");
 
     private static ChainMode clientMode = ChainMode.NORMAL;
     private static boolean keyStateSent;
@@ -41,10 +46,22 @@ public final class VeinMinerPlusClient {
 
     private static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(CHAIN_KEY);
+        event.register(CONFIG_KEY);
     }
 
     @SubscribeEvent
     public static void onKey(InputEvent.Key event) {
+        if (CONFIG_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS
+                    && Screen.hasShiftDown()
+                    && Minecraft.getInstance().player != null
+                    && Minecraft.getInstance().level != null
+                    && Minecraft.getInstance().screen == null) {
+                NetworkHandler.requestConfigScreen();
+            }
+            return;
+        }
+
         if (!CHAIN_KEY.matches(event.getKey(), event.getScanCode())) {
             return;
         }
