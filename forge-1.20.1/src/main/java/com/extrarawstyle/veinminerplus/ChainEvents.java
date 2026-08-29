@@ -144,8 +144,7 @@ public final class ChainEvents {
         // auto-refill can otherwise replace the stack between server ticks.
         ItemStack toolStack = player.getMainHandItem();
 
-        BreakFace breakFace = LAST_BREAK_FACES.get(player.getUUID());
-        Direction face = breakFace != null && breakFace.pos().equals(target) ? breakFace.face() : Direction.UP;
+        Direction face = resolveBreakFace(player, target);
         DropBuffer drops = new DropBuffer();
         PENDING_DROPS.put(player.getUUID(), drops);
         PENDING_DROP_ORIGINS.put(player.getUUID(), target);
@@ -252,7 +251,9 @@ public final class ChainEvents {
         if (state.isAir() || !level.mayInteract(player, pos)) {
             return false;
         }
-        if (!isWhitelisted(state, whitelist)) {
+        // The whitelist scopes blast searches; normal and area modes already
+        // restrict candidates to the block that started the chain.
+        if (mode.isBlast() && !isWhitelisted(state, whitelist)) {
             return false;
         }
 
@@ -392,6 +393,19 @@ public final class ChainEvents {
             case Y -> start.offset(first, 0, second);
             case Z -> start.offset(first, second, 0);
         };
+    }
+
+    private static Direction resolveBreakFace(ServerPlayer player, BlockPos target) {
+        BreakFace breakFace = LAST_BREAK_FACES.remove(player.getUUID());
+        if (breakFace != null && breakFace.pos().equals(target) && breakFace.face() != null) {
+            return breakFace.face();
+        }
+
+        // BreakEvent does not carry the hit face. Derive a stable fallback
+        // from the player's current view instead of defaulting to UP, which
+        // would make an area chain tunnel downward from the origin.
+        var look = player.getLookAngle();
+        return Direction.getNearest(look.x, look.y, look.z).getOpposite();
     }
 
     private static List<BlockPos> createNormalOffsets() {
