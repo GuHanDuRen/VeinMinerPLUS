@@ -8,7 +8,11 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -30,14 +34,26 @@ public final class VeinMinerPlusClient {
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_GRAVE_ACCENT,
             "key.categories.veinminerplus");
-    private static final KeyMapping CONFIG_KEY = new KeyMapping(
-            "key.veinminerplus.config",
+    private static final KeyMapping COPY_BLOCK_ID_KEY = new KeyMapping(
+            "key.veinminerplus.copy_block_id",
             InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_A,
+            InputConstants.UNKNOWN.getValue(),
+            "key.categories.veinminerplus");
+    private static final KeyMapping COPY_ORE_TAGS_KEY = new KeyMapping(
+            "key.veinminerplus.copy_ore_tags",
+            InputConstants.Type.KEYSYM,
+            InputConstants.UNKNOWN.getValue(),
+            "key.categories.veinminerplus");
+    private static final KeyMapping WHITELIST_SELECT_KEY = new KeyMapping(
+            "key.veinminerplus.whitelist_select",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_ENTER,
             "key.categories.veinminerplus");
 
     private static ChainMode clientMode = ChainMode.NORMAL;
     private static boolean keyStateSent;
+    private static VeinMinerConfigScreen whitelistSelectionScreen;
+    private static VeinMinerConfigScreen pendingWhitelistSelectionReturn;
 
     public VeinMinerPlusClient(IEventBus modEventBus, ModContainer container) {
         modEventBus.addListener(VeinMinerPlusClient::registerKeyMappings);
@@ -46,18 +62,27 @@ public final class VeinMinerPlusClient {
 
     private static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(CHAIN_KEY);
-        event.register(CONFIG_KEY);
+        event.register(COPY_BLOCK_ID_KEY);
+        event.register(COPY_ORE_TAGS_KEY);
+        event.register(WHITELIST_SELECT_KEY);
     }
 
     @SubscribeEvent
     public static void onKey(InputEvent.Key event) {
-        if (CONFIG_KEY.matches(event.getKey(), event.getScanCode())) {
-            if (event.getAction() == GLFW.GLFW_PRESS
-                    && Screen.hasShiftDown()
-                    && Minecraft.getInstance().player != null
-                    && Minecraft.getInstance().level != null
-                    && Minecraft.getInstance().screen == null) {
-                NetworkHandler.requestConfigScreen();
+        if (handleWhitelistSelectionKey(event.getKey(), event.getScanCode(), event.getAction())) {
+            return;
+        }
+
+        if (COPY_BLOCK_ID_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS) {
+                copyBlockId();
+            }
+            return;
+        }
+
+        if (COPY_ORE_TAGS_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS) {
+                copyOreTags();
             }
             return;
         }
@@ -75,9 +100,152 @@ public final class VeinMinerPlusClient {
         }
     }
 
+    private static void copyBlockId() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!isInGame(minecraft)) {
+            return;
+        }
+        BlockState state = getAimedBlockState(minecraft);
+        if (state == null) {
+            showClipboardMessage(minecraft, "message.veinminerplus.copy_no_block");
+            return;
+        }
+
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        if (id == null) {
+            showClipboardMessage(minecraft, "message.veinminerplus.copy_no_block");
+            return;
+        }
+
+        String value = id.toString();
+        minecraft.keyboardHandler.setClipboard(value);
+        showClipboardMessage(minecraft, "message.veinminerplus.block_id_copied", value);
+    }
+
+    private static void copyOreTags() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!isInGame(minecraft)) {
+            return;
+        }
+        BlockState state = getAimedBlockState(minecraft);
+        if (state == null) {
+            showClipboardMessage(minecraft, "message.veinminerplus.copy_no_block");
+            return;
+        }
+
+        String value = state.getTags()
+                .filter(tag -> tag.location().getPath().contains("ore"))
+                .map(tag -> "#" + tag.location())
+                .distinct()
+                .sorted()
+                .collect(java.util.stream.Collectors.joining("\n"));
+        if (value.isEmpty()) {
+            showClipboardMessage(minecraft, "message.veinminerplus.no_ore_tags");
+            return;
+        }
+
+        minecraft.keyboardHandler.setClipboard(value);
+        int count = value.split("\\n").length;
+        showClipboardMessage(minecraft, "message.veinminerplus.ore_tags_copied", count);
+    }
+
+    private static boolean isInGame(Minecraft minecraft) {
+        return minecraft.player != null && minecraft.level != null && minecraft.screen == null;
+    }
+
+    private static BlockState getAimedBlockState(Minecraft minecraft) {
+        if (!isInGame(minecraft) || !(minecraft.hitResult instanceof BlockHitResult hit)) {
+            return null;
+        }
+        return minecraft.level.getBlockState(hit.getBlockPos());
+    }
+
+    private static void showClipboardMessage(Minecraft minecraft, String key, Object... args) {
+        if (minecraft.player != null) {
+            minecraft.player.displayClientMessage(Component.translatable(key, args), true);
+        }
+    }
+
     static void openConfigScreen(NetworkHandler.ConfigSnapshotPayload config) {
+        whitelistSelectionScreen = null;
+        pendingWhitelistSelectionReturn = null;
         clientMode = ChainMode.fromOrdinal(config.mode());
         Minecraft.getInstance().setScreen(new VeinMinerConfigScreen(config));
+    }
+
+    static void beginWhitelistSelection(VeinMinerConfigScreen screen) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.level == null || minecraft.screen != screen) {
+            return;
+        }
+
+        screen.captureDraftValues();
+        whitelistSelectionScreen = screen;
+        minecraft.setScreen(null);
+        showClipboardMessage(minecraft, "message.veinminerplus.whitelist_select_prompt");
+    }
+
+    static boolean handleWhitelistSelectionKey(int key, int scanCode, int action) {
+        if (whitelistSelectionScreen == null) {
+            return false;
+        }
+        if (action != GLFW.GLFW_PRESS) {
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_ESCAPE) {
+            queueWhitelistSelectionReturn("message.veinminerplus.whitelist_select_cancelled");
+        } else if (WHITELIST_SELECT_KEY.matches(key, scanCode)
+                || (WHITELIST_SELECT_KEY.getKey().getValue() == GLFW.GLFW_KEY_ENTER
+                        && key == GLFW.GLFW_KEY_KP_ENTER)) {
+            confirmWhitelistSelection();
+        }
+        return true;
+    }
+
+    private static void confirmWhitelistSelection() {
+        Minecraft minecraft = Minecraft.getInstance();
+        VeinMinerConfigScreen screen = whitelistSelectionScreen;
+        if (screen == null) {
+            return;
+        }
+
+        BlockState state = getAimedBlockState(minecraft);
+        if (state == null || state.isAir()) {
+            showClipboardMessage(minecraft, "message.veinminerplus.whitelist_select_no_block");
+            return;
+        }
+
+        screen.addAimedWhitelistEntry(state);
+        queueWhitelistSelectionReturn("message.veinminerplus.whitelist_entry_added");
+    }
+
+    private static void queueWhitelistSelectionReturn(String messageKey) {
+        Minecraft minecraft = Minecraft.getInstance();
+        VeinMinerConfigScreen screen = whitelistSelectionScreen;
+        if (screen == null) {
+            return;
+        }
+
+        whitelistSelectionScreen = null;
+        pendingWhitelistSelectionReturn = screen;
+        showClipboardMessage(minecraft, messageKey);
+    }
+
+    private static void restorePendingWhitelistSelection() {
+        if (pendingWhitelistSelectionReturn == null) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.level == null) {
+            pendingWhitelistSelectionReturn = null;
+            return;
+        }
+
+        VeinMinerConfigScreen screen = pendingWhitelistSelectionReturn;
+        pendingWhitelistSelectionReturn = null;
+        minecraft.setScreen(screen);
     }
 
     static void setClientMode(ChainMode mode) {
@@ -113,6 +281,7 @@ public final class VeinMinerPlusClient {
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
+        restorePendingWhitelistSelection();
         syncKeyState();
     }
 

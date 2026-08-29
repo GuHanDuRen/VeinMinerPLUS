@@ -2,8 +2,6 @@ package com.extrarawstyle.veinminerplus;
 
 import org.lwjgl.glfw.GLFW;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RenderGuiEvent;
@@ -18,13 +16,20 @@ public final class VeinMinerPlusClientEvents {
 
     @SubscribeEvent
     public static void onKey(InputEvent.Key event) {
-        if (VeinMinerPlusClient.CONFIG_KEY.matches(event.getKey(), event.getScanCode())) {
-            if (event.getAction() == GLFW.GLFW_PRESS
-                    && Screen.hasShiftDown()
-                    && Minecraft.getInstance().player != null
-                    && Minecraft.getInstance().level != null
-                    && Minecraft.getInstance().screen == null) {
-                NetworkHandler.requestConfigScreen();
+        if (VeinMinerPlusClient.handleWhitelistSelectionKey(event.getKey(), event.getScanCode(), event.getAction())) {
+            return;
+        }
+
+        if (VeinMinerPlusClient.COPY_BLOCK_ID_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS) {
+                VeinMinerPlusClient.copyBlockId();
+            }
+            return;
+        }
+
+        if (VeinMinerPlusClient.COPY_ORE_TAGS_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS) {
+                VeinMinerPlusClient.copyOreTags();
             }
             return;
         }
@@ -63,6 +68,7 @@ public final class VeinMinerPlusClientEvents {
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
+            VeinMinerPlusClient.restorePendingWhitelistSelection();
             VeinMinerPlusClient.syncKeyState();
         }
     }

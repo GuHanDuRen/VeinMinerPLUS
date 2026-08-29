@@ -1,6 +1,8 @@
 {
   "key.veinminerplus.chain": "连锁挖掘",
-  "key.veinminerplus.config": "打开 VeinMinerPlus 设置",
+  "key.veinminerplus.copy_block_id": "复制方块 ID",
+  "key.veinminerplus.copy_ore_tags": "复制矿物词典",
+  "key.veinminerplus.whitelist_select": "确认添加白名单",
   "key.categories.veinminerplus": "VeinMinerPlus",
   "effect.veinminerplus.chain_saturation": "连锁饱腹",
   "chain.veinminerplus.normal": "普通连锁",
@@ -59,10 +61,18 @@
   "screen.veinminerplus.config.section.player": "玩家行为",
   "screen.veinminerplus.config.consume_hunger": "消耗饱食度",
   "screen.veinminerplus.config.whitelist": "方块白名单",
-  "screen.veinminerplus.config.whitelist.description": "支持方块 ID、* 通配符和 #方块标签；用逗号、分号或换行分隔。+ 添加准星方块的矿物标签；- 移除其矿物标签和精确 ID，无准星方块时移除最后一条规则。",
+  "screen.veinminerplus.config.whitelist.description": "支持方块 ID、* 通配符和 #方块标签；用逗号、分号或换行分隔。+ 进入选择模式，对准方块后按 Enter 添加矿物标签；Esc 取消。- 移除其矿物标签和精确 ID，无准星方块时移除最后一条规则。",
   "screen.veinminerplus.config.reset_defaults": "恢复默认设置",
   "screen.veinminerplus.config.auto_radius": "低 TPS 自动降半径",
   "screen.veinminerplus.config.range": "[%s-%s]",
   "message.veinminerplus.config_saved": "VeinMinerPlus 配置已保存",
-  "message.veinminerplus.config_permission": "需要权限等级 2 才能打开 VeinMinerPlus 设置"
+  "message.veinminerplus.config_permission": "需要权限等级 2 才能打开 VeinMinerPlus 设置",
+  "message.veinminerplus.copy_no_block": "当前没有瞄准方块",
+  "message.veinminerplus.block_id_copied": "已复制方块 ID：%s",
+  "message.veinminerplus.no_ore_tags": "准星方块没有矿物词典条目",
+  "message.veinminerplus.ore_tags_copied": "已复制 %s 个矿物词典条目",
+  "message.veinminerplus.whitelist_select_prompt": "请对准要添加的方块并按 Enter 确认，按 Esc 取消",
+  "message.veinminerplus.whitelist_select_no_block": "当前没有瞄准方块，请对准方块后按 Enter",
+  "message.veinminerplus.whitelist_entry_added": "已将准星方块添加到白名单",
+  "message.veinminerplus.whitelist_select_cancelled": "已取消添加白名单"
 }
