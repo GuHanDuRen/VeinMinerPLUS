@@ -17,8 +17,7 @@ public final class Config {
     public static final boolean DEFAULT_BLAST_AUTO_REDUCE_RADIUS = true;
     public static final boolean DEFAULT_CONSUME_HUNGER = false;
     public static final int DEFAULT_MODE_ORDINAL = 0;
-    public static final List<String> DEFAULT_BLOCK_WHITELIST = List.of();
-    private static final String LEGACY_DEFAULT_WHITELIST = "*ore";
+    public static final List<String> DEFAULT_BLOCK_WHITELIST = List.of("*ore");
     static final int MAX_WHITELIST_ENTRIES = 256;
     static final int MAX_WHITELIST_ENTRY_LENGTH = 128;
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
@@ -64,7 +63,7 @@ public final class Config {
             .define("consumeHunger", DEFAULT_CONSUME_HUNGER);
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BLOCK_WHITELIST = BUILDER
-            .comment("Block whitelist rules. Supports block IDs, * wildcards, and #block tags. Default: unspecified.")
+        .comment("Additional targets for the all-ores blast mode (BLAST_ORES). Supports block IDs, * wildcards, and #block tags. Default: *ore.")
             .defineListAllowEmpty("blockWhitelist", DEFAULT_BLOCK_WHITELIST, value -> value instanceof String string
                     && isValidBlockId(string));
 
@@ -105,18 +104,11 @@ public final class Config {
     }
 
     static String whitelistText() {
-        return String.join(", ", effectiveWhitelist(BLOCK_WHITELIST.get()));
+        return String.join("\n", effectiveWhitelist(BLOCK_WHITELIST.get()));
     }
 
     static List<String> effectiveWhitelist(Iterable<?> values) {
-        List<String> normalized = normalizeWhitelist(values);
-        // Versions before the whitelist became opt-in persisted the implicit
-        // `*ore` default. Treat that lone legacy value as unspecified so an
-        // upgrade does not silently disable blast modes for ordinary blocks.
-        if (normalized.size() == 1 && LEGACY_DEFAULT_WHITELIST.equals(normalized.get(0))) {
-            return List.of();
-        }
-        return normalized;
+        return normalizeWhitelist(values);
     }
 
     static String normalizeBlockId(String value) {

@@ -251,18 +251,15 @@ public final class ChainEvents {
         if (state.isAir() || !level.mayInteract(player, pos)) {
             return false;
         }
-        // The whitelist scopes blast searches; normal and area modes already
-        // restrict candidates to the block that started the chain.
-        if (mode.isBlast() && !isWhitelisted(state, whitelist)) {
-            return false;
-        }
-
-        boolean matches = switch (mode) {
+        boolean modeMatches = switch (mode) {
             case BLAST_ANY -> true;
             case BLAST_ORES -> isOre(state);
             case BLAST_LOGS -> state.is(BlockTags.LOGS);
             default -> state.getBlock() == targetBlock;
         };
+        // Whitelist entries extend only the all-ores blast mode; they do not
+        // replace that mode's original ore rule.
+        boolean matches = modeMatches || (mode == ChainMode.BLAST_ORES && isWhitelisted(state, whitelist));
         return matches
                 && state.getDestroySpeed(level, pos) >= 0.0F
                 && !isContainer(level, pos, state)
@@ -276,8 +273,8 @@ public final class ChainEvents {
 
     private static boolean isWhitelisted(BlockState state, Set<String> whitelist) {
         ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        if (whitelist.isEmpty()) {
-            return true;
+        if (whitelist == null || whitelist.isEmpty()) {
+            return false;
         }
         if (id == null) {
             return false;
@@ -567,6 +564,9 @@ public final class ChainEvents {
             this.mode = mode;
             this.drops = drops;
             this.toolStack = toolStack;
+            // A 3x3 chain includes the manually mined block's plane; 1x1
+            // continues behind it because the origin is already broken.
+            this.areaDepth = mode == ChainMode.AREA_3X3 ? 0 : 1;
             this.whitelist = configuredWhitelist();
             this.hungerSnapshot = !Config.CONSUME_HUNGER.get() && !player.isCreative()
                     ? hungerBefore == null ? HungerSnapshot.capture(player) : hungerBefore
@@ -809,11 +809,13 @@ public final class ChainEvents {
         }
 
         private boolean matchesSparseState(BlockState state) {
-            return isWhitelisted(state, whitelist) && switch (mode) {
+            boolean modeMatches = switch (mode) {
+                case BLAST_ANY -> !state.isAir();
                 case BLAST_ORES -> isOre(state);
                 case BLAST_LOGS -> state.is(BlockTags.LOGS);
                 default -> state.is(targetBlock);
             };
+            return modeMatches || (mode == ChainMode.BLAST_ORES && isWhitelisted(state, whitelist));
         }
 
         private void finish() {
