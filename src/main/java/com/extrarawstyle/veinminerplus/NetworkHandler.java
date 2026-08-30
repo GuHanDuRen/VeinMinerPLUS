@@ -51,10 +51,6 @@ public final class NetworkHandler {
         PacketDistributor.sendToServer(new ModeChangePayload(mode.ordinal()));
     }
 
-    static void requestConfigScreen() {
-        PacketDistributor.sendToServer(new ConfigRequestPayload());
-    }
-
     static void openConfigScreen(ServerPlayer player) {
         PacketDistributor.sendToPlayer(player, ConfigSnapshotPayload.current(player));
     }
