@@ -140,9 +140,9 @@ public final class ChainEvents {
             return;
         }
 
-        // Keep the chain bound to the tool stack that started it. Inventory
-        // auto-refill can otherwise replace the stack between server ticks.
-        ItemStack toolStack = player.getMainHandItem();
+        // Keep the chain bound to the selected slot while allowing inventory
+        // auto-refill to replace a broken tool in that slot.
+        int toolSlot = player.getInventory().selected;
 
         Direction face = resolveBreakFace(player, target);
         DropBuffer drops = new DropBuffer();
@@ -152,7 +152,7 @@ public final class ChainEvents {
         PENDING_JOBS.remove(player.getUUID());
         HungerSnapshot hungerBefore = HUNGER_STARTS.remove(player.getUUID());
         ChainJob job = new ChainJob(level, player, target, state.getBlock(), face, mode, drops, hungerBefore,
-                toolStack);
+                toolSlot);
         ACTIVE_JOBS.put(player.getUUID(), job);
         job.refreshHungerStatus();
         showProgress(player, 1);
@@ -531,7 +531,7 @@ public final class ChainEvents {
         private final Block targetBlock;
         private final Direction face;
         private final ChainMode mode;
-        private final ItemStack toolStack;
+        private final int toolSlot;
         private final Set<BlockPos> examined = new HashSet<>();
         private final Deque<SearchNode> frontier = new ArrayDeque<>();
         private final Deque<BlockPos> sparseCenters = new ArrayDeque<>();
@@ -555,7 +555,7 @@ public final class ChainEvents {
 
         private ChainJob(ServerLevel level, ServerPlayer player, BlockPos origin, Block targetBlock,
                 Direction face, ChainMode mode, DropBuffer drops, HungerSnapshot hungerBefore,
-                ItemStack toolStack) {
+                int toolSlot) {
             this.level = level;
             this.player = player;
             this.origin = origin;
@@ -563,7 +563,7 @@ public final class ChainEvents {
             this.face = face;
             this.mode = mode;
             this.drops = drops;
-            this.toolStack = toolStack;
+            this.toolSlot = toolSlot;
             // A 3x3 chain includes the manually mined block's plane; 1x1
             // continues behind it because the origin is already broken.
             this.areaDepth = mode == ChainMode.AREA_3X3 ? 0 : 1;
@@ -602,7 +602,7 @@ public final class ChainEvents {
         private void tick() {
             PENDING_DROPS.remove(player.getUUID(), drops);
             PENDING_DROP_ORIGINS.remove(player.getUUID(), origin);
-            if (!isToolUnchanged()) {
+            if (!isToolSlotUnchanged()) {
                 finish();
                 return;
             }
@@ -629,8 +629,8 @@ public final class ChainEvents {
             }
         }
 
-        private boolean isToolUnchanged() {
-            return player.getMainHandItem() == toolStack;
+        private boolean isToolSlotUnchanged() {
+            return player.getInventory().selected == toolSlot;
         }
 
         private void tickGraph() {
@@ -641,7 +641,7 @@ public final class ChainEvents {
                     : BLOCK_BREAKS_PER_TICK;
             while (checks < SEARCH_CHECKS_PER_TICK && breaks < breakLimit
                     && !frontier.isEmpty() && brokenCount < totalLimit
-                    && HELD_KEYS.contains(player.getUUID()) && isToolUnchanged()) {
+                    && HELD_KEYS.contains(player.getUUID()) && isToolSlotUnchanged()) {
                 SearchNode node = frontier.removeFirst();
                 int centerChecks = 0;
                 while (centerChecks < SEARCH_CHECKS_PER_CENTER
@@ -674,7 +674,7 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
 
-            if (!isToolUnchanged() || !HELD_KEYS.contains(player.getUUID()) || frontier.isEmpty()
+            if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID()) || frontier.isEmpty()
                     || brokenCount >= totalLimit) {
                 finish();
             }
@@ -685,7 +685,7 @@ public final class ChainEvents {
             int planeSize = size * size;
             int breaks = 0;
             while (breaks < BLOCK_BREAKS_PER_TICK && areaDepth <= areaDepthLimit
-                    && HELD_KEYS.contains(player.getUUID()) && isToolUnchanged()) {
+                    && HELD_KEYS.contains(player.getUUID()) && isToolSlotUnchanged()) {
                 if (areaIndex >= planeSize) {
                     areaDepth++;
                     areaIndex = 0;
@@ -714,7 +714,7 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
 
-            if (!isToolUnchanged() || !HELD_KEYS.contains(player.getUUID()) || areaDepth > areaDepthLimit) {
+            if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID()) || areaDepth > areaDepthLimit) {
                 finish();
             }
         }
@@ -725,7 +725,7 @@ public final class ChainEvents {
             int breakLimit = Config.MAX_BLAST_BLOCKS_PER_TICK.get();
             int centerLimit = Math.max(32, breakLimit);
             while (breaks < breakLimit && brokenCount < totalLimit && HELD_KEYS.contains(player.getUUID())
-                    && isToolUnchanged()) {
+                    && isToolSlotUnchanged()) {
                 while (sparseTargets.isEmpty() && !sparseCenters.isEmpty() && scannedCenters < centerLimit) {
                     scanSparseCenter(sparseCenters.removeFirst());
                     scannedCenters++;
@@ -747,7 +747,7 @@ public final class ChainEvents {
             if (breaks > 0) {
                 showProgress(player, brokenCount);
             }
-            if (!isToolUnchanged() || !HELD_KEYS.contains(player.getUUID())
+            if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID())
                     || sparseTargets.isEmpty() && sparseCenters.isEmpty()
                     || brokenCount >= totalLimit) {
                 finish();
