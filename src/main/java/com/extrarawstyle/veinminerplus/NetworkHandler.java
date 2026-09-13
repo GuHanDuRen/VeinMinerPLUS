@@ -10,7 +10,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "3";
+    private static final String PROTOCOL_VERSION = "4";
     static final int MAX_WHITELIST_TEXT_LENGTH = 4096;
 
     private NetworkHandler() {
@@ -48,7 +48,7 @@ public final class NetworkHandler {
     }
 
     static void sendModeChange(ChainMode mode) {
-        PacketDistributor.sendToServer(new ModeChangePayload(mode.ordinal()));
+        PacketDistributor.sendToServer(new ModeChangePayload(mode.id()));
     }
 
     static void openConfigScreen(ServerPlayer player) {
@@ -60,11 +60,11 @@ public final class NetworkHandler {
     }
 
     private static void applyConfig(ServerPlayer player, ConfigUpdatePayload payload) {
-        Config.MAX_NORMAL_BLOCKS.set(Mth.clamp(payload.maxNormalBlocks(), 32, 32767));
-        Config.MAX_NORMAL_BLOCKS_PER_TICK.set(Mth.clamp(payload.maxNormalBlocksPerTick(), 1, 384));
-        Config.MAX_BLAST_BLOCKS.set(Mth.clamp(payload.maxBlastBlocks(), 32, 32767));
-        Config.MAX_BLAST_BLOCKS_PER_TICK.set(Mth.clamp(payload.maxBlastBlocksPerTick(), 1, 512));
-        Config.BLAST_SEARCH_DISTANCE.set(Mth.clamp(payload.blastSearchDistance(), 3, 128));
+        Config.MAX_NORMAL_BLOCKS.set(Mth.clamp(payload.maxNormalBlocks(), 32, Integer.MAX_VALUE));
+        Config.MAX_NORMAL_BLOCKS_PER_TICK.set(Mth.clamp(payload.maxNormalBlocksPerTick(), 1, Integer.MAX_VALUE));
+        Config.MAX_BLAST_BLOCKS.set(Mth.clamp(payload.maxBlastBlocks(), 32, Integer.MAX_VALUE));
+        Config.MAX_BLAST_BLOCKS_PER_TICK.set(Mth.clamp(payload.maxBlastBlocksPerTick(), 1, Integer.MAX_VALUE));
+        Config.BLAST_SEARCH_DISTANCE.set(Mth.clamp(payload.blastSearchDistance(), 3, Integer.MAX_VALUE));
         Config.BLAST_LOW_TPS_THRESHOLD.set(Mth.clamp(payload.blastLowTpsThreshold(), 5, 20));
         Config.BLAST_MANHATTAN.set(payload.blastManhattan());
         Config.BLAST_AUTO_REDUCE_RADIUS.set(payload.blastAutoReduceRadius());
@@ -132,7 +132,7 @@ public final class NetworkHandler {
                     Config.MAX_BLAST_BLOCKS_PER_TICK.getAsInt(), Config.BLAST_SEARCH_DISTANCE.getAsInt(),
                     Config.BLAST_LOW_TPS_THRESHOLD.getAsInt(), Config.BLAST_MANHATTAN.getAsBoolean(),
                     Config.BLAST_AUTO_REDUCE_RADIUS.getAsBoolean(), Config.CONSUME_HUNGER.getAsBoolean(),
-                    ChainEvents.getMode(player).ordinal(), Config.whitelistText());
+                    ChainEvents.getMode(player).id(), Config.whitelistText());
         }
 
         @Override
