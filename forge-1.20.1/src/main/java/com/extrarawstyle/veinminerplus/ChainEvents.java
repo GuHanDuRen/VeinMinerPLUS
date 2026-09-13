@@ -564,9 +564,9 @@ public final class ChainEvents {
             this.mode = mode;
             this.drops = drops;
             this.toolSlot = toolSlot;
-            // A 3x3 chain includes the manually mined block's plane; 1x1
-            // continues behind it because the origin is already broken.
-            this.areaDepth = mode == ChainMode.AREA_3X3 ? 0 : 1;
+            // Area modes larger than 1x1 include the manually mined block's plane;
+            // 1x1 continues behind it because the origin is already broken.
+            this.areaDepth = mode.isArea() && mode != ChainMode.AREA_1X1 ? 0 : 1;
             this.whitelist = configuredWhitelist();
             this.hungerSnapshot = !Config.CONSUME_HUNGER.get() && !player.isCreative()
                     ? hungerBefore == null ? HungerSnapshot.capture(player) : hungerBefore
@@ -681,10 +681,13 @@ public final class ChainEvents {
         }
 
         private void tickArea() {
-            int size = mode == ChainMode.AREA_1X1 ? 1 : 3;
+            int size = mode.areaSize();
             int planeSize = size * size;
             int breaks = 0;
-            while (breaks < BLOCK_BREAKS_PER_TICK && areaDepth <= areaDepthLimit
+            // Area modes share the configurable normal per-tick budget instead of a
+            // fixed low constant, so they are no longer throttled to 8 blocks per tick.
+            int breakLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.get();
+            while (breaks < breakLimit && areaDepth <= areaDepthLimit
                     && HELD_KEYS.contains(player.getUUID()) && isToolSlotUnchanged()) {
                 if (areaIndex >= planeSize) {
                     areaDepth++;

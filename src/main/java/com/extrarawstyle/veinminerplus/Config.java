@@ -8,10 +8,10 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class Config {
     public static final int DEFAULT_MAX_NORMAL_BLOCKS = 1024;
-    public static final int DEFAULT_MAX_NORMAL_BLOCKS_PER_TICK = 8;
+    public static final int DEFAULT_MAX_NORMAL_BLOCKS_PER_TICK = 32;
     public static final int DEFAULT_MAX_BLAST_BLOCKS = 32767;
     public static final int DEFAULT_MAX_BLAST_BLOCKS_PER_TICK = 64;
-    public static final int DEFAULT_BLAST_SEARCH_DISTANCE = 20;
+    public static final int DEFAULT_BLAST_SEARCH_DISTANCE = 48;
     public static final int DEFAULT_BLAST_LOW_TPS_THRESHOLD = 15;
     public static final boolean DEFAULT_BLAST_MANHATTAN = true;
     public static final boolean DEFAULT_BLAST_AUTO_REDUCE_RADIUS = true;
@@ -23,32 +23,32 @@ public final class Config {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
     public static final ModConfigSpec.IntValue MAX_NORMAL_BLOCKS = BUILDER
-            .comment("Maximum blocks in normal connected mode. Range: 32-32767.")
-            .defineInRange("maxNormalBlocks", DEFAULT_MAX_NORMAL_BLOCKS, 32, 32767);
+            .comment("Maximum blocks in normal connected mode. Range: 32-2147483647.")
+            .defineInRange("maxNormalBlocks", DEFAULT_MAX_NORMAL_BLOCKS, 32, Integer.MAX_VALUE);
 
     public static final ModConfigSpec.IntValue MAX_NORMAL_BLOCKS_PER_TICK = BUILDER
-            .comment("Maximum normal chain blocks broken per server tick. Range: 1-384.")
-            .defineInRange("maxNormalBlocksPerTick", DEFAULT_MAX_NORMAL_BLOCKS_PER_TICK, 1, 384);
+            .comment("Maximum normal and area chain blocks broken per server tick. Range: 1-2147483647.")
+            .defineInRange("maxNormalBlocksPerTick", DEFAULT_MAX_NORMAL_BLOCKS_PER_TICK, 1, Integer.MAX_VALUE);
 
     public static final ModConfigSpec.IntValue MAX_BLAST_BLOCKS = BUILDER
-            .comment("Maximum blocks in blast modes. Range: 32-32767.")
-            .defineInRange("maxBlastBlocks", DEFAULT_MAX_BLAST_BLOCKS, 32, 32767);
+            .comment("Maximum blocks in blast modes. Range: 32-2147483647.")
+            .defineInRange("maxBlastBlocks", DEFAULT_MAX_BLAST_BLOCKS, 32, Integer.MAX_VALUE);
 
     public static final ModConfigSpec.IntValue MAX_BLAST_BLOCKS_PER_TICK = BUILDER
-            .comment("Maximum blast blocks broken per server tick. Range: 1-512.")
-            .defineInRange("maxBlastBlocksPerTick", DEFAULT_MAX_BLAST_BLOCKS_PER_TICK, 1, 512);
+            .comment("Maximum blast blocks broken per server tick. Range: 1-2147483647.")
+            .defineInRange("maxBlastBlocksPerTick", DEFAULT_MAX_BLAST_BLOCKS_PER_TICK, 1, Integer.MAX_VALUE);
 
     public static final ModConfigSpec.IntValue BLAST_SEARCH_DISTANCE = BUILDER
-            .comment("Maximum blast search distance from each found block. Range: 3-128.")
-            .defineInRange("blastSearchDistance", DEFAULT_BLAST_SEARCH_DISTANCE, 3, 128);
+            .comment("Maximum blast search distance from each found block. Range: 3-2147483647.")
+            .defineInRange("blastSearchDistance", DEFAULT_BLAST_SEARCH_DISTANCE, 3, Integer.MAX_VALUE);
 
     public static final ModConfigSpec.BooleanValue BLAST_MANHATTAN = BUILDER
             .comment("Use Manhattan distance instead of spherical distance for blast searches.")
             .define("blastManhattan", DEFAULT_BLAST_MANHATTAN);
 
     public static final ModConfigSpec.IntValue DEFAULT_MODE = BUILDER
-            .comment("Default chain mode ordinal used for players without a session override. Range: 0-6.")
-            .defineInRange("defaultMode", DEFAULT_MODE_ORDINAL, 0, 6);
+            .comment("Default chain mode ID used for players without a session override. Range: 0-7.")
+            .defineInRange("defaultMode", DEFAULT_MODE_ORDINAL, 0, 7);
 
     public static final ModConfigSpec.IntValue BLAST_LOW_TPS_THRESHOLD = BUILDER
             .comment("Warn when server TPS falls below this value during blast mining. Range: 5-20.")

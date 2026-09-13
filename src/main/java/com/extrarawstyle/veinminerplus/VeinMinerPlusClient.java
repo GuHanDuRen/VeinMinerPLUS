@@ -286,7 +286,7 @@ public final class VeinMinerPlusClient {
     }
 
     private static void syncKeyState() {
-        boolean held = isChainKeyActive(Minecraft.getInstance()) && !Screen.hasShiftDown();
+        boolean held = isChainKeyActive(Minecraft.getInstance());
         if (held == keyStateSent) {
             return;
         }
