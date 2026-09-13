@@ -12,10 +12,13 @@ public final class Config {
     public static final int DEFAULT_MAX_BLAST_BLOCKS = 32767;
     public static final int DEFAULT_MAX_BLAST_BLOCKS_PER_TICK = 64;
     public static final int DEFAULT_BLAST_SEARCH_DISTANCE = 48;
+    public static final int DEFAULT_BLAST_CHUNK_SCANS_PER_TICK = 8;
+    public static final int MAX_BLAST_CHUNK_SCANS_PER_TICK = 1024;
     public static final int DEFAULT_BLAST_LOW_TPS_THRESHOLD = 15;
     public static final boolean DEFAULT_BLAST_MANHATTAN = true;
     public static final boolean DEFAULT_BLAST_AUTO_REDUCE_RADIUS = true;
     public static final boolean DEFAULT_CONSUME_HUNGER = false;
+    public static final boolean DEFAULT_DEBUG_LOGGING = false;
     public static final int DEFAULT_MODE_ORDINAL = 0;
     public static final List<String> DEFAULT_BLOCK_WHITELIST = List.of("*ore");
     static final int MAX_WHITELIST_ENTRIES = 256;
@@ -42,6 +45,11 @@ public final class Config {
             .comment("Maximum blast search distance from each found block. Range: 3-2147483647.")
             .defineInRange("blastSearchDistance", DEFAULT_BLAST_SEARCH_DISTANCE, 3, Integer.MAX_VALUE);
 
+    public static final ModConfigSpec.IntValue BLAST_CHUNK_SCANS_PER_TICK = BUILDER
+            .comment("Maximum sparse blast chunks scanned per server tick. Range: 1-1024.")
+            .defineInRange("blastChunkScansPerTick", DEFAULT_BLAST_CHUNK_SCANS_PER_TICK, 1,
+                    MAX_BLAST_CHUNK_SCANS_PER_TICK);
+
     public static final ModConfigSpec.BooleanValue BLAST_MANHATTAN = BUILDER
             .comment("Use Manhattan distance instead of spherical distance for blast searches.")
             .define("blastManhattan", DEFAULT_BLAST_MANHATTAN);
@@ -61,6 +69,10 @@ public final class Config {
     public static final ModConfigSpec.BooleanValue CONSUME_HUNGER = BUILDER
             .comment("Whether chain mining consumes hunger. Disabled by default.")
             .define("consumeHunger", DEFAULT_CONSUME_HUNGER);
+
+    public static final ModConfigSpec.BooleanValue DEBUG_LOGGING = BUILDER
+            .comment("Enable temporary server-side diagnostics for chain mining.")
+            .define("debugLogging", DEFAULT_DEBUG_LOGGING);
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BLOCK_WHITELIST = BUILDER
         .comment("Additional targets for the all-ores blast mode (BLAST_ORES). Supports block IDs, * wildcards, and #block tags. Default: *ore.")
