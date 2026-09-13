@@ -28,6 +28,7 @@
   "veinminerplus.configuration.blastAutoReduceRadius": "低 TPS 时自动降低爆破半径",
   "veinminerplus.configuration.consumeHunger": "连锁挖掘消耗饱食度",
   "message.veinminerplus.progress": "连锁挖掘：%s 个方块",
+  "message.veinminerplus.chain_failed": "%s 无法连锁：附近没有匹配的同类方块",
   "message.veinminerplus.blast_radius_reduced": "服务器 TPS 过低（%s），爆破半径已从 %s 降至 %s",
   "message.veinminerplus.blast_radius_too_large": "服务器 TPS 过低（%s），爆破半径可能过大（当前 %s）",
   "commands.veinminerplus.blast_speed": "爆破速度：每 tick %s 个方块（范围 %s-%s）",

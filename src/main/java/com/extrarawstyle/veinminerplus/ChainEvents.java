@@ -52,6 +52,13 @@ public final class ChainEvents {
     private static final int SEARCH_CHECKS_PER_TICK = 16384;
     private static final int SEARCH_CHECKS_PER_CENTER = 256;
     private static final int BLOCK_BREAKS_PER_TICK = 8;
+    // Sparse blasts search chunk by chunk so a wide radius cannot stall one tick.
+    // A same-block blast that produced no chain re-notifies at most this often.
+    private static final int CHAIN_FAIL_NOTICE_COOLDOWN = 40;
+    // Ores that differ only by host stone are the same ore to a player, so a vein
+    // that crosses the stone/deepslate boundary must still chain as one deposit.
+    // These host names are stripped from a block id before families are compared.
+    private static final String ORE_SUFFIX = "_ore";
 
     private static final TagKey<Block> ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.withDefaultNamespace("ores"));
@@ -59,6 +66,8 @@ public final class ChainEvents {
             ResourceLocation.fromNamespaceAndPath("c", "ores"));
     private static final List<BlockPos> NORMAL_OFFSETS = createNormalOffsets();
     private static final Map<String, List<BlockPos>> BLAST_OFFSETS = new ConcurrentHashMap<>();
+    private static final Map<Integer, List<ChunkOffset>> SPARSE_CHUNK_OFFSETS = new ConcurrentHashMap<>();
+    private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
     private static final Map<UUID, ChainJob> ACTIVE_JOBS = new HashMap<>();
@@ -126,19 +135,40 @@ public final class ChainEvents {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onBlockBreak(BlockEvent.BreakEvent event) {
-        if (event.isCanceled()
-                || !(event.getPlayer() instanceof ServerPlayer player)
-                || !HELD_KEYS.contains(player.getUUID())
-                || ACTIVE_JOBS.containsKey(player.getUUID())
-                || PENDING_JOBS.contains(player.getUUID())
+        if (!(event.getPlayer() instanceof ServerPlayer player)
                 || !(event.getLevel() instanceof ServerLevel level)) {
             return;
         }
 
         BlockPos target = event.getPos().immutable();
         BlockState state = event.getState();
+        boolean rootBreak = !ACTIVE_JOBS.containsKey(player.getUUID());
+        if (rootBreak) {
+            debug("break event player={} canceled={} held={} pending={} target={} id={}",
+                    player.getGameProfile().getName(), event.isCanceled(), HELD_KEYS.contains(player.getUUID()),
+                    PENDING_JOBS.contains(player.getUUID()), target, blockId(state.getBlock()));
+        }
+        if (event.isCanceled()) {
+            debug("break ignored reason=event canceled");
+            return;
+        }
+        if (!HELD_KEYS.contains(player.getUUID())) {
+            debug("break ignored reason=key not held");
+            return;
+        }
+        if (ACTIVE_JOBS.containsKey(player.getUUID())) {
+            return;
+        }
+        if (PENDING_JOBS.contains(player.getUUID())) {
+            debug("break ignored reason=pending job");
+            return;
+        }
+
         ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
-        if (!isEligible(level, player, target, state, state.getBlock(), mode)) {
+        String rejection = eligibilityFailure(level, player, target, state, state.getBlock(), mode,
+                configuredWhitelist());
+        if (rejection != null) {
+            debug("break ignored reason={} mode={} target={}", rejection, mode, blockId(state.getBlock()));
             return;
         }
 
@@ -224,6 +254,7 @@ public final class ChainEvents {
             return;
         }
 
+        debug("key state player={} held={}", serverPlayer.getGameProfile().getName(), held);
         if (held) {
             HELD_KEYS.add(serverPlayer.getUUID());
         } else {
@@ -234,7 +265,9 @@ public final class ChainEvents {
 
     static void setMode(Player player, int ordinal) {
         if (player instanceof ServerPlayer serverPlayer) {
-            PLAYER_MODES.put(serverPlayer.getUUID(), ChainMode.fromOrdinal(ordinal));
+            ChainMode mode = ChainMode.fromOrdinal(ordinal);
+            PLAYER_MODES.put(serverPlayer.getUUID(), mode);
+            debug("mode state player={} requested={} resolved={}", serverPlayer.getGameProfile().getName(), ordinal, mode);
         }
     }
 
@@ -245,22 +278,40 @@ public final class ChainEvents {
 
     private static boolean isEligible(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
             Block targetBlock, ChainMode mode, Set<String> whitelist) {
-        if (state.isAir() || !level.mayInteract(player, pos)) {
-            return false;
+        return eligibilityFailure(level, player, pos, state, targetBlock, mode, whitelist) == null;
+    }
+
+    private static String eligibilityFailure(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
+            Block targetBlock, ChainMode mode, Set<String> whitelist) {
+        if (state.isAir()) {
+            return "air";
+        }
+        if (!level.mayInteract(player, pos)) {
+            return "mayInteract=false";
         }
         boolean modeMatches = switch (mode) {
             case BLAST_ANY -> true;
             case BLAST_ORES -> isOre(state);
             case BLAST_LOGS -> state.is(BlockTags.LOGS);
+            case BLAST_SAME -> sameTarget(state, targetBlock);
             default -> state.getBlock() == targetBlock;
         };
         // Whitelist entries extend only the all-ores blast mode; they do not
-        // replace that mode's original ore rule.
+        // replace that mode's original rule.
         boolean matches = modeMatches || (mode == ChainMode.BLAST_ORES && isWhitelisted(state, whitelist));
-        return matches
-                && state.getDestroySpeed(level, pos) >= 0.0F
-                && !isContainer(level, pos, state)
-                && (player.isCreative() || EventHooks.doPlayerHarvestCheck(player, state, level, pos));
+        if (!matches) {
+            return "mode mismatch";
+        }
+        // Do not reject negative destroy speed here. Some mods, including ATM,
+        // use a negative base strength and override the player's destroy
+        // progress; the actual game-mode break call is the source of truth.
+        if (isContainer(level, pos, state)) {
+            return "container";
+        }
+        if (!player.isCreative() && !EventHooks.doPlayerHarvestCheck(player, state, level, pos)) {
+            return "harvestCheck=false";
+        }
+        return null;
     }
 
     private static Set<String> configuredWhitelist() {
@@ -342,7 +393,12 @@ public final class ChainEvents {
 
         // Some mod packs do not add their ores to the shared ore tags.
         ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        return id != null && id.getPath().endsWith("_ore");
+        return id != null && id.getPath().endsWith(ORE_SUFFIX);
+    }
+
+    /** Matches the exact block type that started the chain. */
+    private static boolean sameTarget(BlockState state, Block targetBlock) {
+        return state.getBlock() == targetBlock;
     }
 
     private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,
@@ -442,8 +498,65 @@ public final class ChainEvents {
         return Collections.unmodifiableList(offsets);
     }
 
+    /**
+     * Chunk offsets for sparse blast searches, ordered from the centre chunk
+     * outwards so the closest ore is found first.
+     */
+    private static List<ChunkOffset> sparseChunkOffsets(int distance) {
+        int radius = (distance >> 4) + 1;
+        return SPARSE_CHUNK_OFFSETS.computeIfAbsent(radius, ChainEvents::createSparseChunkOffsets);
+    }
+
+    private static List<ChunkOffset> createSparseChunkOffsets(int radius) {
+        List<ChunkOffset> offsets = new ArrayList<>((2 * radius + 1) * (2 * radius + 1));
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
+                offsets.add(new ChunkOffset(x, z));
+            }
+        }
+        offsets.sort(Comparator
+                .comparingInt((ChunkOffset offset) -> Math.max(Math.abs(offset.x()), Math.abs(offset.z())))
+                .thenComparingInt(offset -> offset.x() * offset.x() + offset.z() * offset.z()));
+        return Collections.unmodifiableList(offsets);
+    }
+
     private static void showProgress(ServerPlayer player, int count) {
         player.displayClientMessage(Component.translatable("message.veinminerplus.progress", count), true);
+    }
+
+    /**
+     * Tells the player that a same-block blast could not find a matching block.
+     * The chain key stays held while digging, so repeated notices for the same
+     * block are throttled.
+     */
+    private static void showChainFailed(ServerPlayer player, Block block) {
+        if (block == null) {
+            return;
+        }
+        UUID id = player.getUUID();
+        long now = player.serverLevel().getGameTime();
+        ChainFailNotice last = CHAIN_FAIL_NOTICES.get(id);
+        if (last != null && last.block() == block && now - last.tick() < CHAIN_FAIL_NOTICE_COOLDOWN) {
+            return;
+        }
+
+        CHAIN_FAIL_NOTICES.put(id, new ChainFailNotice(block, now));
+        player.displayClientMessage(Component.translatable("message.veinminerplus.chain_failed",
+                block.getName()), true);
+    }
+
+    private static void debug(String message, Object... args) {
+        if (Config.DEBUG_LOGGING.getAsBoolean()) {
+            VeinMinerPlus.LOGGER.info("[chain-debug] " + message, args);
+        }
+    }
+
+    private static String blockId(Block block) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
+        return id == null ? "<unregistered>" : id.toString();
+    }
+
+    private record ChainFailNotice(Block block, long tick) {
     }
 
     private static final class DropBuffer {
@@ -527,6 +640,9 @@ public final class ChainEvents {
         private final Map<Long, List<BlockPos>> sparseChunkMatches = new HashMap<>();
         private final Map<Long, LevelChunk> loadedChunks = new HashMap<>();
         private List<BlockPos> graphOffsets;
+        private List<ChunkOffset> sparseScanOffsets;
+        private BlockPos sparseScanCenter;
+        private int sparseScanOffset;
         private final int totalLimit;
         private final int areaDepthLimit;
         private final boolean sparseBlast;
@@ -536,6 +652,9 @@ public final class ChainEvents {
         private int blastDistance;
         private boolean lowTpsWarned;
         private int brokenCount = 1;
+        private boolean sawSameTarget;
+        private int sparseChunksScanned;
+        private int sparseMatchedPositions;
         private int areaDepth = 1;
         private int areaIndex;
 
@@ -557,18 +676,25 @@ public final class ChainEvents {
             this.areaDepthLimit = Config.MAX_NORMAL_BLOCKS.getAsInt();
             this.blastDistance = Config.BLAST_SEARCH_DISTANCE.getAsInt();
             this.blastManhattan = Config.BLAST_MANHATTAN.getAsBoolean();
-            this.graphOffsets = mode.isBlast()
+            BlockState targetState = targetBlock.defaultBlockState();
+            this.sparseBlast = mode == ChainMode.BLAST_SAME
+                    || mode == ChainMode.BLAST_ORES
+                    || mode == ChainMode.BLAST_LOGS;
+            // Sparse blasts never read graphOffsets, and building them for a wide
+            // radius costs millions of positions, so only build what gets used.
+            this.graphOffsets = mode.isBlast() && !sparseBlast
                     ? blastOffsets(blastDistance, blastManhattan)
                     : NORMAL_OFFSETS;
-            BlockState targetState = targetBlock.defaultBlockState();
-            this.sparseBlast = mode == ChainMode.BLAST_ORES
-                    || mode == ChainMode.BLAST_LOGS
-                    || mode == ChainMode.BLAST_SAME && (isOre(targetState) || targetState.is(BlockTags.LOGS));
+            this.sparseScanOffsets = sparseChunkOffsets(blastDistance);
             this.sparseTargets = new PriorityQueue<>(Comparator
                     .comparingLong((BlockPos pos) -> squaredDistance(origin, pos))
                     .thenComparingInt(BlockPos::getY)
                     .thenComparingInt(BlockPos::getX)
                     .thenComparingInt(BlockPos::getZ));
+
+            debug("job start player={} mode={} target={} pos={} distance={} manhattan={} whitelist={}",
+                    player.getGameProfile().getName(), mode, blockId(targetBlock), origin, blastDistance,
+                    blastManhattan, whitelist);
 
             examined.add(origin);
             loadedChunks.put(chunkKey(origin), level.getChunk(origin.getX() >> 4, origin.getZ() >> 4));
@@ -642,6 +768,9 @@ public final class ChainEvents {
                     }
 
                     BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
+                    if (mode == ChainMode.BLAST_SAME && sameTarget(state, targetBlock)) {
+                        sawSameTarget = true;
+                    }
                     if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
                             && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
                         brokenCount++;
@@ -708,26 +837,30 @@ public final class ChainEvents {
 
         private void tickSparseBlast() {
             int breaks = 0;
-            int scannedCenters = 0;
             int breakLimit = Config.MAX_BLAST_BLOCKS_PER_TICK.getAsInt();
-            int centerLimit = Math.max(32, breakLimit);
+            int scanBudget = Config.BLAST_CHUNK_SCANS_PER_TICK.getAsInt();
             while (breaks < breakLimit && brokenCount < totalLimit && HELD_KEYS.contains(player.getUUID())
                     && isToolSlotUnchanged()) {
-                while (sparseTargets.isEmpty() && !sparseCenters.isEmpty() && scannedCenters < centerLimit) {
-                    scanSparseCenter(sparseCenters.removeFirst());
-                    scannedCenters++;
-                }
+                scanBudget = fillSparseTargets(scanBudget);
                 if (sparseTargets.isEmpty()) {
                     break;
                 }
 
                 BlockPos candidate = sparseTargets.poll();
                 BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
-                if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
-                        && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
-                    brokenCount++;
-                    breaks++;
-                    sparseCenters.addLast(candidate);
+                String rejection = eligibilityFailure(level, player, candidate, state, targetBlock, mode, whitelist);
+                debug("candidate mode={} target={} pos={} actual={} eligible={} reason={}", mode,
+                        blockId(targetBlock), candidate, blockId(state.getBlock()), rejection == null,
+                        rejection == null ? "-" : rejection);
+                if (rejection == null) {
+                    boolean broken = breakOne(level, player, candidate, targetBlock, mode, whitelist);
+                    debug("candidate break mode={} target={} pos={} broken={}", mode,
+                            blockId(targetBlock), candidate, broken);
+                    if (broken) {
+                        brokenCount++;
+                        breaks++;
+                        sparseCenters.addLast(candidate);
+                    }
                 }
             }
 
@@ -735,44 +868,92 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
             if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID())
-                    || sparseTargets.isEmpty() && sparseCenters.isEmpty()
+                    || sparseSearchExhausted()
                     || brokenCount >= totalLimit) {
                 finish();
             }
         }
 
-        private void scanSparseCenter(BlockPos center) {
-            int distance = blastDistance;
-            int minChunkX = (center.getX() - distance) >> 4;
-            int maxChunkX = (center.getX() + distance) >> 4;
-            int minChunkZ = (center.getZ() - distance) >> 4;
-            int maxChunkZ = (center.getZ() + distance) >> 4;
+        /**
+         * Searches the nearest chunks first and stops once something is queued, so
+         * the chain starts breaking blocks immediately instead of scanning the whole
+         * blast radius in one tick.
+         */
+        private int fillSparseTargets(int budget) {
+            while (sparseTargets.isEmpty() && budget > 0) {
+                if (sparseScanCenter == null && !beginSparseCenter()) {
+                    break;
+                }
+                if (sparseScanOffset >= sparseScanOffsets.size()) {
+                    sparseScanCenter = null;
+                    continue;
+                }
 
-            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
-                for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
-                    long key = chunkKey(chunkX, chunkZ);
-                    LevelChunk chunk = loadedChunks.get(key);
-                    if (chunk == null) {
-                        chunk = level.getChunk(chunkX, chunkZ);
-                        loadedChunks.put(key, chunk);
-                    }
-
-                    List<BlockPos> matches = sparseChunkMatches.get(key);
-                    if (matches == null) {
-                        matches = new ArrayList<>();
-                        List<BlockPos> positions = matches;
-                        chunk.findBlocks(this::matchesSparseState,
-                                (pos, state) -> positions.add(pos.immutable()));
-                        sparseChunkMatches.put(key, matches);
-                    }
-
-                    for (BlockPos pos : matches) {
-                        if (withinBlastDistance(center, pos, distance, blastManhattan) && examined.add(pos)) {
-                            sparseTargets.add(pos);
-                        }
-                    }
+                ChunkOffset offset = sparseScanOffsets.get(sparseScanOffset++);
+                int chunkX = (sparseScanCenter.getX() >> 4) + offset.x();
+                int chunkZ = (sparseScanCenter.getZ() >> 4) + offset.z();
+                if (outsideSparseScanBox(sparseScanCenter, chunkX, chunkZ)) {
+                    continue;
+                }
+                if (scanSparseChunk(sparseScanCenter, chunkX, chunkZ)) {
+                    budget--;
                 }
             }
+            return budget;
+        }
+
+        private boolean beginSparseCenter() {
+            BlockPos center = sparseCenters.pollFirst();
+            if (center == null) {
+                return false;
+            }
+            sparseScanCenter = center;
+            sparseScanOffset = 0;
+            return true;
+        }
+
+        private boolean outsideSparseScanBox(BlockPos center, int chunkX, int chunkZ) {
+            return chunkX < (center.getX() - blastDistance) >> 4
+                    || chunkX > (center.getX() + blastDistance) >> 4
+                    || chunkZ < (center.getZ() - blastDistance) >> 4
+                    || chunkZ > (center.getZ() + blastDistance) >> 4;
+        }
+
+        /** Scans one chunk; returns true when that chunk had to be searched for the first time. */
+        private boolean scanSparseChunk(BlockPos center, int chunkX, int chunkZ) {
+            long key = chunkKey(chunkX, chunkZ);
+            LevelChunk chunk = loadedChunks.get(key);
+            if (chunk == null) {
+                chunk = level.getChunk(chunkX, chunkZ);
+                loadedChunks.put(key, chunk);
+            }
+
+            List<BlockPos> matches = sparseChunkMatches.get(key);
+            boolean firstScan = false;
+            if (matches == null) {
+                matches = new ArrayList<>();
+                List<BlockPos> positions = matches;
+                chunk.findBlocks(this::matchesSparseState,
+                        (pos, state) -> positions.add(pos.immutable()));
+                sparseChunkMatches.put(key, matches);
+                firstScan = true;
+                sparseChunksScanned++;
+                sparseMatchedPositions += matches.size();
+                if (!matches.isEmpty()) {
+                    debug("chunk matches mode={} target={} chunk=({}, {}) count={}", mode,
+                            blockId(targetBlock), chunkX, chunkZ, matches.size());
+                }
+            }
+
+            for (BlockPos pos : matches) {
+                if (withinBlastDistance(center, pos, blastDistance, blastManhattan) && examined.add(pos)) {
+                    if (mode == ChainMode.BLAST_SAME) {
+                        sawSameTarget = true;
+                    }
+                    sparseTargets.add(pos);
+                }
+            }
+            return firstScan;
         }
 
         private void adjustBlastRadiusForTps() {
@@ -785,7 +966,10 @@ public final class ChainEvents {
             if (Config.BLAST_AUTO_REDUCE_RADIUS.getAsBoolean() && blastDistance > 3) {
                 int oldDistance = blastDistance;
                 blastDistance = Math.max(3, blastDistance / 2);
-                graphOffsets = blastOffsets(blastDistance, blastManhattan);
+                if (!sparseBlast) {
+                    graphOffsets = blastOffsets(blastDistance, blastManhattan);
+                }
+                sparseScanOffsets = sparseChunkOffsets(blastDistance);
                 sparseTargets.clear();
                 player.displayClientMessage(Component.translatable("message.veinminerplus.blast_radius_reduced",
                         String.format("%.1f", tps), oldDistance, blastDistance), true);
@@ -800,18 +984,36 @@ public final class ChainEvents {
                 case BLAST_ANY -> !state.isAir();
                 case BLAST_ORES -> isOre(state);
                 case BLAST_LOGS -> state.is(BlockTags.LOGS);
+                case BLAST_SAME -> sameTarget(state, targetBlock);
                 default -> state.is(targetBlock);
             };
             return modeMatches || (mode == ChainMode.BLAST_ORES && isWhitelisted(state, whitelist));
         }
 
         private void finish() {
+            // Only report when the search really saw no matching block nearby. If one
+            // was found but could not be broken, "no matching blocks" would be false.
+            if (mode == ChainMode.BLAST_SAME && brokenCount <= 1 && !sawSameTarget && searchExhausted()) {
+                showChainFailed(player, targetBlock);
+            }
+            debug("job finish player={} mode={} target={} broken={} sawSame={} chunksScanned={} matchedPositions={} exhausted={}",
+                    player.getGameProfile().getName(), mode, blockId(targetBlock), brokenCount, sawSameTarget,
+                    sparseChunksScanned, sparseMatchedPositions, searchExhausted());
             drops.flush(player.serverLevel(), player);
             ACTIVE_JOBS.remove(player.getUUID(), this);
             HungerProtection protection = HUNGER_PROTECTIONS.get(player.getUUID());
             if (protection != null) {
                 protection.requestFinalRestore();
             }
+        }
+
+        /** True once the search queues have been drained without work left to do. */
+        private boolean searchExhausted() {
+            return sparseBlast ? sparseSearchExhausted() : frontier.isEmpty();
+        }
+
+        private boolean sparseSearchExhausted() {
+            return sparseTargets.isEmpty() && sparseCenters.isEmpty() && sparseScanCenter == null;
         }
 
         private void maintainHungerProtection() {
@@ -883,6 +1085,9 @@ public final class ChainEvents {
     }
 
     private record BreakFace(BlockPos pos, Direction face) {
+    }
+
+    private record ChunkOffset(int x, int z) {
     }
 
     private record HungerStart(BlockPos pos, HungerSnapshot snapshot) {

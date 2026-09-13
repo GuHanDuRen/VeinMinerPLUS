@@ -28,6 +28,7 @@
   "veinminerplus.configuration.blastAutoReduceRadius": "Automatically reduce blast radius on low TPS",
   "veinminerplus.configuration.consumeHunger": "Consume hunger while chain mining",
   "message.veinminerplus.progress": "VeinMiner: %s blocks",
+  "message.veinminerplus.chain_failed": "%s cannot be chained: no matching same-type blocks",
   "message.veinminerplus.blast_radius_reduced": "Server TPS is low (%s); blast radius reduced from %s to %s",
   "message.veinminerplus.blast_radius_too_large": "Server TPS is low (%s); blast radius may be too large (current %s)",
   "commands.veinminerplus.blast_speed": "Blast speed: %s blocks per tick (range %s-%s)",

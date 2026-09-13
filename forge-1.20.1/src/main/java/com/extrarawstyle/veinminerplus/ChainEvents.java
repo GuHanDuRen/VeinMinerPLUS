@@ -51,6 +51,15 @@ public final class ChainEvents {
     private static final int SEARCH_CHECKS_PER_TICK = 16384;
     private static final int SEARCH_CHECKS_PER_CENTER = 256;
     private static final int BLOCK_BREAKS_PER_TICK = 8;
+    // A same-block blast that produced no chain re-notifies at most this often.
+    private static final int CHAIN_FAIL_NOTICE_COOLDOWN = 40;
+    // Ores that differ only by host stone are the same ore to a player, so a vein
+    // that crosses the stone/deepslate boundary must still chain as one deposit.
+    // These host names are stripped from a block id before families are compared.
+    private static final String ORE_SUFFIX = "_ore";
+    private static final String[] ORE_HOST_STONES = { "deepslate", "slate", "stone", "endstone", "netherrack",
+            "nether", "end", "other", "blackstone", "basalt", "tuff", "granite", "diorite", "andesite", "marble",
+            "limestone" };
 
     private static final TagKey<Block> ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.withDefaultNamespace("ores"));
@@ -60,6 +69,9 @@ public final class ChainEvents {
             ResourceLocation.fromNamespaceAndPath("c", "ores"));
     private static final List<BlockPos> NORMAL_OFFSETS = createNormalOffsets();
     private static final Map<String, List<BlockPos>> BLAST_OFFSETS = new ConcurrentHashMap<>();
+    // Pure memoisation of oreFamilyKey; bounded by the size of the block registry.
+    private static final Map<Block, String> ORE_FAMILY_KEYS = new HashMap<>();
+    private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
     private static final Map<UUID, ChainJob> ACTIVE_JOBS = new HashMap<>();
@@ -137,6 +149,11 @@ public final class ChainEvents {
         BlockState state = event.getState();
         ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
         if (!isEligible(level, player, target, state, state.getBlock(), mode)) {
+            // A same-block blast on an ineligible block (a container, or a block the
+            // held tool cannot harvest) would otherwise fail without any feedback.
+            if (mode == ChainMode.BLAST_SAME) {
+                showChainFailed(player, state.getBlock());
+            }
             return;
         }
 
@@ -255,10 +272,11 @@ public final class ChainEvents {
             case BLAST_ANY -> true;
             case BLAST_ORES -> isOre(state);
             case BLAST_LOGS -> state.is(BlockTags.LOGS);
+            case BLAST_SAME -> sameTarget(state, targetBlock);
             default -> state.getBlock() == targetBlock;
         };
         // Whitelist entries extend only the all-ores blast mode; they do not
-        // replace that mode's original ore rule.
+        // replace that mode's original rule.
         boolean matches = modeMatches || (mode == ChainMode.BLAST_ORES && isWhitelisted(state, whitelist));
         return matches
                 && state.getDestroySpeed(level, pos) >= 0.0F
@@ -337,7 +355,62 @@ public final class ChainEvents {
 
         // Some mod packs do not add their ores to the shared ore tags.
         ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        return id != null && id.getPath().endsWith("_ore");
+        return id != null && id.getPath().endsWith(ORE_SUFFIX);
+    }
+
+    /**
+     * Same-block blast match. Ores that differ only by host stone (allthemodium_ore
+     * versus allthemodium_slate_ore, or diamond_ore versus deepslate_diamond_ore)
+     * belong to one deposit, so they chain together instead of stopping at the
+     * stone/deepslate boundary.
+     */
+    private static boolean sameTarget(BlockState state, Block targetBlock) {
+        if (state.getBlock() == targetBlock) {
+            return true;
+        }
+        String targetFamily = oreFamilyKey(targetBlock);
+        return targetFamily != null && targetFamily.equals(oreFamilyKey(state.getBlock()));
+    }
+
+    /** Ore family of a block, or null when the block is not an ore. */
+    private static String oreFamilyKey(Block block) {
+        if (block == null) {
+            return null;
+        }
+        String cached = ORE_FAMILY_KEYS.get(block);
+        if (cached != null) {
+            return cached.isEmpty() ? null : cached;
+        }
+
+        String family = computeOreFamilyKey(block);
+        ORE_FAMILY_KEYS.put(block, family == null ? "" : family);
+        return family;
+    }
+
+    private static String computeOreFamilyKey(Block block) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
+        if (id == null) {
+            return null;
+        }
+        String path = id.getPath();
+        if (!path.endsWith(ORE_SUFFIX) || path.length() == ORE_SUFFIX.length()) {
+            return null;
+        }
+
+        String base = path.substring(0, path.length() - ORE_SUFFIX.length());
+        for (String host : ORE_HOST_STONES) {
+            String suffix = "_" + host;
+            if (base.length() > suffix.length() && base.endsWith(suffix)) {
+                base = base.substring(0, base.length() - suffix.length());
+                break;
+            }
+            String prefix = host + "_";
+            if (base.length() > prefix.length() && base.startsWith(prefix)) {
+                base = base.substring(prefix.length());
+                break;
+            }
+        }
+        return base.isEmpty() ? null : id.getNamespace() + ":" + base;
     }
 
     private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,
@@ -456,6 +529,30 @@ public final class ChainEvents {
 
     private static void showProgress(ServerPlayer player, int count) {
         player.displayClientMessage(Component.translatable("message.veinminerplus.progress", count), true);
+    }
+
+    /**
+     * Tells the player that a same-block blast could not find a matching block.
+     * The chain key stays held while digging, so repeated notices for the same
+     * block are throttled.
+     */
+    private static void showChainFailed(ServerPlayer player, Block block) {
+        if (block == null) {
+            return;
+        }
+        UUID id = player.getUUID();
+        long now = player.serverLevel().getGameTime();
+        ChainFailNotice last = CHAIN_FAIL_NOTICES.get(id);
+        if (last != null && last.block() == block && now - last.tick() < CHAIN_FAIL_NOTICE_COOLDOWN) {
+            return;
+        }
+
+        CHAIN_FAIL_NOTICES.put(id, new ChainFailNotice(block, now));
+        player.displayClientMessage(Component.translatable("message.veinminerplus.chain_failed",
+                block.getName()), true);
+    }
+
+    private record ChainFailNotice(Block block, long tick) {
     }
 
     private static final class DropBuffer {
@@ -816,6 +913,7 @@ public final class ChainEvents {
                 case BLAST_ANY -> !state.isAir();
                 case BLAST_ORES -> isOre(state);
                 case BLAST_LOGS -> state.is(BlockTags.LOGS);
+                case BLAST_SAME -> sameTarget(state, targetBlock);
                 default -> state.is(targetBlock);
             };
             return modeMatches || (mode == ChainMode.BLAST_ORES && isWhitelisted(state, whitelist));
@@ -826,12 +924,22 @@ public final class ChainEvents {
                 return;
             }
             finished = true;
+            // A same-block blast that never grew past the mined block means nothing
+            // around it matched; report that instead of failing silently.
+            if (mode == ChainMode.BLAST_SAME && brokenCount <= 1 && searchExhausted()) {
+                showChainFailed(player, targetBlock);
+            }
             if (hungerSnapshot != null) {
                 hungerSnapshot.restoreExact(player);
                 FINAL_HUNGER_RESTORES.put(player.getUUID(), hungerSnapshot);
             }
             drops.flush(player.serverLevel(), player);
             ACTIVE_JOBS.remove(player.getUUID(), this);
+        }
+
+        /** True once the search queues have been drained without work left to do. */
+        private boolean searchExhausted() {
+            return sparseBlast ? sparseTargets.isEmpty() && sparseCenters.isEmpty() : frontier.isEmpty();
         }
 
         private boolean restoreHungerAtTickEnd() {
