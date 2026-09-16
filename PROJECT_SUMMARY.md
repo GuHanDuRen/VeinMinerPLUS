@@ -1,6 +1,6 @@
 # VeinMinerPlus Project Handoff
 
-Last updated: 2026-09-13
+Last updated: 2026-09-15
 
 ## Read First
 
@@ -24,9 +24,9 @@ Each build writes to its own `build\libs` directory. Historical JARs are retaine
 
 | Target | Current version | Artifact | SHA-256 |
 | --- | --- | --- | --- |
-| NeoForge 1.21.1 | `1.2.8` | `build\libs\veinminerplusG-1.21.1-neoforge-1.2.8.jar` | `D335F825BA19BE6590E5822C2F9E471DF3479EDB1B0DA2EFF60A68B82C298E68` |
-| Forge 1.20.1 | `1.2.10` | `forge-1.20.1\build\libs\veinminerplusG-1.20.1-forge-1.2.10.jar` | `CF31A4EB280000B42F121ED095312C503E90F100345CBCE5A019327F3206BE4C` |
-| Forge 1.12.2 | `1.2.8-forge1122` | `forge-1.12.2\build\libs\veinminerplusG-1.12.2-forge-1.2.8.jar` | `3D94E61071E8E66643E1ACE4E8F6FE8E1981BB945FC26B67A8134BD6017F4AD5` |
+| NeoForge 1.21.1 | `1.2.15` | `build\libs\veinminerplusG-1.21.1-neoforge-1.2.15.jar` | `6191A2263BC8B41351D425B44E8377FDAADD061702CF403C35AB79689B756541` |
+| Forge 1.20.1 | `1.2.12` | `forge-1.20.1\build\libs\veinminerplusG-1.20.1-forge-1.2.12.jar` | `23D779727BA38C0D084D4ED7681F06C50202D0C0D209DD17C00E636960265ED0` |
+| Forge 1.12.2 | `1.2.10-forge1122` | `forge-1.12.2\build\libs\veinminerplusG-1.12.2-forge-1.2.10.jar` | `4EFADEE1F526CA3B08B76451BBE38F37DCC8AF51A4EC060356224084D662DBF2` |
 
 Increment the relevant `mod_version` for every further functional or metadata change. Preserve old JARs and do not overwrite them.
 
@@ -92,6 +92,8 @@ The common config file is `config/veinminerplus-common.toml` in each running ins
 | `maxBlastBlocks` | blast total limit | `32-2147483647` | `32767` |
 | `maxBlastBlocksPerTick` | blast blocks broken per tick | `1-2147483647` | `64` |
 | `blastSearchDistance` | blast search distance from each found block | `3-2147483647` | `48` |
+| `blastChunkScansPerTick` | sparse blast chunks scanned per server tick | `1-1024` | `8` |
+| `debugLogging` | temporary server-side chain diagnostics | `true/false` | `false` |
 
 Upper bounds were raised from `32767` / `384` / `32767` / `512` / `128` to `Integer.MAX_VALUE` (`2147483647`). Defaults were left unchanged.
 
@@ -164,7 +166,7 @@ After any build, compare the new JAR's SHA-256 against the source artifact befor
 
 ## Validation Status
 
-- All three builds compile and produce JARs from the current source: `1.2.8` (NeoForge 1.21.1), `1.2.10` (Forge 1.20.1), and `1.2.8-forge1122` (Forge 1.12.2).
+- All three builds compile and produce JARs from the current source: `1.2.15` (NeoForge 1.21.1), `1.2.12` (Forge 1.20.1), and `1.2.10-forge1122` (Forge 1.12.2).
 - Artifact contents were checked by unpacking each JAR. `mods.toml` / `mcmod.info` report the expected version, and the language files carry the updated range text where that build uses it.
 - Bytecode was checked with `javap -c` on each `Config.class`. All five upper bounds are the constant `2147483647`, and the defaults remain `1024` / `32` / `32767` / `64` / `48`.
 - A successful build is not evidence of in-game correctness. None of these versions has been launched or tested in an instance.

@@ -46,6 +46,8 @@
   "screen.veinminerplus.config.blast_speed.description": "爆破模式每个服务器 Tick 最多破坏的方块数。范围：1-2147483647。数值过高可能降低 TPS。",
   "screen.veinminerplus.config.blast_distance": "爆破搜索距离",
   "screen.veinminerplus.config.blast_distance.description": "从每个已找到方块继续搜索的最大距离。范围：3-2147483647。",
+  "screen.veinminerplus.config.blast_scan_speed": "爆破每 Tick 扫描区块数",
+  "screen.veinminerplus.config.blast_scan_speed.description": "每个服务器 Tick 扫描的最大区块数。数值越高，越快找到远处目标，但可能降低 TPS。范围：1-1024。",
   "screen.veinminerplus.config.low_tps": "低 TPS 警告阈值",
   "screen.veinminerplus.config.low_tps.description": "爆破期间服务器 TPS 低于此值时提示，并按设置自动降低半径。范围：5-20。",
   "screen.veinminerplus.config.manhattan": "曼哈顿搜索",
