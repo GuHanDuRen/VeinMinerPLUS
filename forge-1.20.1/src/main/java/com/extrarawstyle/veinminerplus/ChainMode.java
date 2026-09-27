@@ -2,6 +2,7 @@ package com.extrarawstyle.veinminerplus;
 
 public enum ChainMode {
     NORMAL("chain.veinminerplus.normal", 0),
+    USE_BLOCK("chain.veinminerplus.use_block", 8),
     AREA_1X1("chain.veinminerplus.area_1x1", 1),
     AREA_3X3("chain.veinminerplus.area_3x3", 2),
     AREA_5X5("chain.veinminerplus.area_5x5", 7),

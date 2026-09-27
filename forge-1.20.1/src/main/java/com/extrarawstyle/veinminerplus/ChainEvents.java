@@ -29,6 +29,9 @@ import net.minecraft.world.Container;
 import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.level.GameRules;
@@ -36,6 +39,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.capabilities.ForgeCapabilities;
 import net.minecraftforge.common.ForgeHooks;
 import net.minecraftforge.event.TickEvent;
@@ -76,6 +81,8 @@ public final class ChainEvents {
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
     private static final Map<UUID, ChainJob> ACTIVE_JOBS = new HashMap<>();
+    private static final Map<UUID, RightClickJob> ACTIVE_RIGHT_CLICK_JOBS = new HashMap<>();
+    private static final Set<UUID> RIGHT_CLICK_GUARD = new HashSet<>();
     private static final Set<UUID> PENDING_JOBS = new HashSet<>();
     private static final Map<UUID, DropBuffer> PENDING_DROPS = new HashMap<>();
     private static final Map<UUID, BlockPos> PENDING_DROP_ORIGINS = new HashMap<>();
@@ -91,6 +98,10 @@ public final class ChainEvents {
             ChainJob job = ACTIVE_JOBS.get(id);
             if (job != null) {
                 job.finish();
+            }
+            RightClickJob rightClickJob = ACTIVE_RIGHT_CLICK_JOBS.get(id);
+            if (rightClickJob != null) {
+                rightClickJob.finish();
             }
             DropBuffer pendingDrops = PENDING_DROPS.remove(id);
             if (pendingDrops != null) {
@@ -120,6 +131,45 @@ public final class ChainEvents {
             if (!Config.CONSUME_HUNGER.get() && !player.isCreative()) {
                 HUNGER_STARTS.put(player.getUUID(), HungerSnapshot.capture(player));
             }
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)
+                || event.isCanceled()
+                || RIGHT_CLICK_GUARD.contains(player.getUUID())
+                || !HELD_KEYS.contains(player.getUUID())
+                || PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode()) != ChainMode.USE_BLOCK
+                || ACTIVE_JOBS.containsKey(player.getUUID())
+                || ACTIVE_RIGHT_CLICK_JOBS.containsKey(player.getUUID())
+                || event.getItemStack().isEmpty()) {
+            return;
+        }
+
+        ServerLevel level = player.serverLevel();
+        BlockPos origin = event.getPos().immutable();
+        BlockState state = level.getBlockState(origin);
+        if (state.isAir() || !level.mayInteract(player, origin)) {
+            return;
+        }
+
+        InteractionHand hand = event.getHand();
+        ItemStack stack = player.getItemInHand(hand);
+        Item item = stack.getItem();
+        RIGHT_CLICK_GUARD.add(player.getUUID());
+        InteractionResult result;
+        try {
+            result = player.gameMode.useItemOn(player, level, stack, hand, event.getHitVec());
+        } finally {
+            RIGHT_CLICK_GUARD.remove(player.getUUID());
+        }
+
+        event.setCanceled(true);
+        event.setCancellationResult(result);
+        if (result.consumesAction()) {
+            ACTIVE_RIGHT_CLICK_JOBS.put(player.getUUID(),
+                    new RightClickJob(level, player, origin, state.getBlock(), hand, event.getFace(), item));
         }
     }
 
@@ -167,6 +217,9 @@ public final class ChainEvents {
         }
 
         ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
+        if (mode == ChainMode.USE_BLOCK && !isContainer(level, target, state)) {
+            return;
+        }
         String rejection = eligibilityFailure(level, player, target, state, state.getBlock(), mode,
                 configuredWhitelist());
         if (rejection != null) {
@@ -236,6 +289,9 @@ public final class ChainEvents {
             return;
         }
         for (ChainJob job : new ArrayList<>(ACTIVE_JOBS.values())) {
+            job.tick();
+        }
+        for (RightClickJob job : new ArrayList<>(ACTIVE_RIGHT_CLICK_JOBS.values())) {
             job.tick();
         }
     }
@@ -313,7 +369,11 @@ public final class ChainEvents {
         }
         // Some mod packs override destroy progress for blocks with negative base
         // strength. Let the actual game-mode break call decide whether it works.
-        if (isContainer(level, pos, state)) {
+        boolean container = isContainer(level, pos, state);
+        if (mode == ChainMode.USE_BLOCK && !container) {
+            return "not container";
+        }
+        if (container && mode != ChainMode.USE_BLOCK) {
             return "container";
         }
         if (!player.isCreative() && !ForgeHooks.isCorrectToolForDrops(state, player)) {
@@ -530,6 +590,15 @@ public final class ChainEvents {
         return Collections.unmodifiableList(offsets);
     }
 
+    private static List<BlockPos> interactionOffsets(Direction face) {
+        return NORMAL_OFFSETS;
+    }
+
+    private static List<BlockPos> interactionMiningOffsets(ServerLevel level, BlockPos origin, Block targetBlock,
+            Direction face) {
+        return NORMAL_OFFSETS;
+    }
+
     private static List<BlockPos> blastOffsets(int distance, boolean manhattan) {
         String key = distance + ":" + manhattan;
         return BLAST_OFFSETS.computeIfAbsent(key, ignored -> createBlastOffsets(distance, manhattan));
@@ -689,6 +758,109 @@ public final class ChainEvents {
         }
     }
 
+    private static final class RightClickJob {
+        private final ServerLevel level;
+        private final ServerPlayer player;
+        private final Block targetBlock;
+        private final InteractionHand hand;
+        private final Direction face;
+        private final Item item;
+        private final int toolSlot;
+        private final List<BlockPos> offsets;
+        private final Deque<SearchNode> frontier = new ArrayDeque<>();
+        private final Set<BlockPos> examined = new HashSet<>();
+        private int attempted = 1;
+        private boolean finished;
+
+        RightClickJob(ServerLevel level, ServerPlayer player, BlockPos origin, Block targetBlock,
+                InteractionHand hand, Direction face, Item item) {
+            this.level = level;
+            this.player = player;
+            this.targetBlock = targetBlock;
+            this.hand = hand;
+            this.face = face == null ? Direction.UP : face;
+            this.item = item;
+            this.toolSlot = player.getInventory().selected;
+            this.offsets = interactionOffsets(this.face);
+            examined.add(origin);
+            frontier.addLast(new SearchNode(origin, 0));
+        }
+
+        void tick() {
+            if (!isHeldItemUnchanged()
+                    || !HELD_KEYS.contains(player.getUUID())
+                    || player.isRemoved()
+                    || player.isSpectator()
+                    || player.serverLevel() != level) {
+                finish();
+                return;
+            }
+
+            int attemptsThisTick = 0;
+            int checks = 0;
+            int attemptLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.get();
+            int totalLimit = Config.MAX_NORMAL_BLOCKS.get();
+            while (checks < SEARCH_CHECKS_PER_TICK && attemptsThisTick < attemptLimit
+                    && attempted < totalLimit
+                    && !frontier.isEmpty()
+                    && isHeldItemUnchanged()
+                    && HELD_KEYS.contains(player.getUUID())) {
+                SearchNode node = frontier.peekFirst();
+                if (node.nextOffset() == offsets.size()) {
+                    frontier.removeFirst();
+                    continue;
+                }
+                BlockPos offset = offsets.get(node.nextOffset());
+                node.advance();
+                checks++;
+                BlockPos candidate = node.position().offset(offset.getX(), offset.getY(), offset.getZ());
+                if (!level.isInWorldBounds(candidate) || !examined.add(candidate)
+                        || !level.mayInteract(player, candidate)
+                        || !level.getBlockState(candidate).is(targetBlock)) {
+                    continue;
+                }
+
+                frontier.addLast(new SearchNode(candidate, 0));
+                attempted++;
+                attemptsThisTick++;
+                useOn(candidate);
+            }
+
+            if (!isHeldItemUnchanged() || !HELD_KEYS.contains(player.getUUID())
+                    || frontier.isEmpty() || attempted >= totalLimit) {
+                finish();
+            }
+        }
+
+        private boolean isHeldItemUnchanged() {
+            ItemStack stack = player.getItemInHand(hand);
+            return !stack.isEmpty()
+                    && stack.getItem() == item
+                    && (hand != InteractionHand.MAIN_HAND || player.getInventory().selected == toolSlot);
+        }
+
+        private void useOn(BlockPos pos) {
+            Vec3 hitLocation = Vec3.atCenterOf(pos).add(
+                    face.getStepX() * 0.5D, face.getStepY() * 0.5D, face.getStepZ() * 0.5D);
+            BlockHitResult hit = new BlockHitResult(hitLocation, face, pos, false);
+            UUID id = player.getUUID();
+            RIGHT_CLICK_GUARD.add(id);
+            try {
+                player.gameMode.useItemOn(player, level, player.getItemInHand(hand), hand, hit);
+            } finally {
+                RIGHT_CLICK_GUARD.remove(id);
+            }
+        }
+
+        void finish() {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            ACTIVE_RIGHT_CLICK_JOBS.remove(player.getUUID(), this);
+        }
+    }
+
     private static final class ChainJob {
         private final ServerLevel level;
         private final ServerPlayer player;
@@ -749,9 +921,11 @@ public final class ChainEvents {
             this.sparseBlast = mode == ChainMode.BLAST_SAME
                     || mode == ChainMode.BLAST_ORES
                     || mode == ChainMode.BLAST_LOGS;
-            this.graphOffsets = mode.isBlast() && !sparseBlast
-                    ? blastOffsets(blastDistance, blastManhattan)
-                    : NORMAL_OFFSETS;
+            this.graphOffsets = mode == ChainMode.USE_BLOCK
+                    ? interactionMiningOffsets(level, origin, targetBlock, face)
+                    : mode.isBlast() && !sparseBlast
+                            ? blastOffsets(blastDistance, blastManhattan)
+                            : NORMAL_OFFSETS;
             this.sparseScanOffsets = sparseChunkOffsets(blastDistance);
             this.sparseTargets = new PriorityQueue<>(Comparator
                     .comparingLong((BlockPos pos) -> squaredDistance(origin, pos))
@@ -812,7 +986,8 @@ public final class ChainEvents {
             int checks = 0;
             int breaks = 0;
             int breakLimit = mode.isBlast() ? Config.MAX_BLAST_BLOCKS_PER_TICK.get()
-                    : mode == ChainMode.NORMAL ? Config.MAX_NORMAL_BLOCKS_PER_TICK.get()
+                    : mode == ChainMode.NORMAL || mode == ChainMode.USE_BLOCK
+                            ? Config.MAX_NORMAL_BLOCKS_PER_TICK.get()
                     : BLOCK_BREAKS_PER_TICK;
             while (checks < SEARCH_CHECKS_PER_TICK && breaks < breakLimit
                     && !frontier.isEmpty() && brokenCount < totalLimit
