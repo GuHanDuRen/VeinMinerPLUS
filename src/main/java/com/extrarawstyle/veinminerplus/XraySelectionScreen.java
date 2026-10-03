@@ -18,10 +18,13 @@ public final class XraySelectionScreen extends Screen {
     private static final int SLOT_COLUMNS = 9;
     private static final int SLOT_ROWS = 4;
     private static final int SLOT_COUNT = SLOT_COLUMNS * SLOT_ROWS;
-    private static final int PANEL_WIDTH = 200;
-    private static final int PANEL_HEIGHT = 196;
-    private static final ResourceLocation BACKGROUND = ResourceLocation.withDefaultNamespace("popup/background");
-    private static final ResourceLocation SLOT = ResourceLocation.withDefaultNamespace("container/slot");
+    private static final int PANEL_WIDTH = 176;
+    private static final int CHEST_AREA_HEIGHT = 90;
+    private static final int PANEL_HEIGHT = 122;
+    private static final int BUTTON_TOP = 97;
+    private static final int BUTTON_WIDTH = 80;
+    private static final ResourceLocation GENERIC_CHEST_TEXTURE = ResourceLocation
+            .withDefaultNamespace("textures/gui/container/generic_54.png");
 
     private final List<ItemStack> selected = new ArrayList<>();
     private int left;
@@ -41,9 +44,9 @@ public final class XraySelectionScreen extends Screen {
         left = (width - PANEL_WIDTH) / 2;
         top = (height - PANEL_HEIGHT) / 2;
         addRenderableWidget(Button.builder(Component.translatable("screen.veinminerplus.xray.clear"), button -> clearSelected())
-                .bounds(left + 12, top + 165, 74, 20).build());
+                .bounds(left + 4, top + BUTTON_TOP, BUTTON_WIDTH, 20).build());
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> finish())
-                .bounds(left + PANEL_WIDTH - 12 - 76, top + 165, 76, 20).build());
+                .bounds(left + PANEL_WIDTH - 4 - BUTTON_WIDTH, top + BUTTON_TOP, BUTTON_WIDTH, 20).build());
     }
 
     private void clearSelected() {
@@ -68,8 +71,8 @@ public final class XraySelectionScreen extends Screen {
     }
 
     public Rect2i slotArea(int index) {
-        int x = left + (PANEL_WIDTH - SLOT_COLUMNS * SLOT_SIZE) / 2 + (index % SLOT_COLUMNS) * SLOT_SIZE;
-        int y = top + 48 + (index / SLOT_COLUMNS) * SLOT_SIZE;
+        int x = left + 7 + (index % SLOT_COLUMNS) * SLOT_SIZE;
+        int y = top + 17 + (index / SLOT_COLUMNS) * SLOT_SIZE;
         return new Rect2i(x, y, 18, 18);
     }
 
@@ -150,14 +153,17 @@ public final class XraySelectionScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics, mouseX, mouseY, partialTick);
         graphics.fill(0, 0, width, height, 0x50000000);
-        graphics.blitSprite(BACKGROUND, left, top, PANEL_WIDTH, PANEL_HEIGHT);
-        graphics.drawString(font, title, left + 12, top + 12, 0xFF404040, false);
-        graphics.drawString(font, Component.translatable("screen.veinminerplus.xray.selected"), left + 12, top + 34,
-                0xFF404040, false);
+        graphics.blit(GENERIC_CHEST_TEXTURE, left, top, 0.0F, 0.0F, PANEL_WIDTH, CHEST_AREA_HEIGHT, 176, 222);
+        graphics.fill(left + 1, top + CHEST_AREA_HEIGHT, left + PANEL_WIDTH - 1, top + PANEL_HEIGHT - 1,
+                0xFF8B8B8B);
+        graphics.fill(left, top + CHEST_AREA_HEIGHT, left + 1, top + PANEL_HEIGHT, 0xFF555555);
+        graphics.fill(left + PANEL_WIDTH - 1, top + CHEST_AREA_HEIGHT, left + PANEL_WIDTH, top + PANEL_HEIGHT,
+                0xFF555555);
+        graphics.fill(left, top + PANEL_HEIGHT - 1, left + PANEL_WIDTH, top + PANEL_HEIGHT, 0xFF373737);
+        graphics.drawString(font, title, left + 8, top + 6, 0xFF404040, false);
 
         for (int index = 0; index < SLOT_COUNT; index++) {
             Rect2i area = slotArea(index);
-            graphics.blitSprite(SLOT, area.getX(), area.getY(), SLOT_SIZE, SLOT_SIZE);
             ItemStack stack = selected.get(index);
             if (!stack.isEmpty()) {
                 graphics.renderItem(stack, area.getX() + 1, area.getY() + 1);
