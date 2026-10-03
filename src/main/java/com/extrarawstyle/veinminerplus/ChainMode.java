@@ -9,7 +9,8 @@ public enum ChainMode {
     BLAST_SAME("chain.veinminerplus.blast_same", 3),
     BLAST_ORES("chain.veinminerplus.blast_ores", 4),
     BLAST_ANY("chain.veinminerplus.blast_any", 5),
-    BLAST_LOGS("chain.veinminerplus.blast_logs", 6);
+    BLAST_LOGS("chain.veinminerplus.blast_logs", 6),
+    XRAY("chain.veinminerplus.xray", 9);
 
     private final String translationKey;
     private final int id;

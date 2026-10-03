@@ -55,8 +55,8 @@ public final class Config {
             .define("blastManhattan", DEFAULT_BLAST_MANHATTAN);
 
     public static final ForgeConfigSpec.IntValue DEFAULT_MODE = BUILDER
-            .comment("Default chain mode ID used for players without a session override. Range: 0-8.")
-            .defineInRange("defaultMode", DEFAULT_MODE_ORDINAL, 0, 8);
+            .comment("Default chain mode ID used for players without a session override. Range: 0-9.")
+            .defineInRange("defaultMode", DEFAULT_MODE_ORDINAL, 0, ChainMode.values().length - 1);
 
     public static final ForgeConfigSpec.IntValue BLAST_LOW_TPS_THRESHOLD = BUILDER
             .comment("Warn when server TPS falls below this value during blast mining. Range: 5-20.")

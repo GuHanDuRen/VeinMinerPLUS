@@ -14,6 +14,7 @@
   "chain.veinminerplus.blast_ores": "Blast: all ores",
   "chain.veinminerplus.blast_any": "Blast: any harvestable block",
   "chain.veinminerplus.blast_logs": "Blast: logs",
+  "chain.veinminerplus.xray": "X-Ray mode (placeholder)",
   "hud.veinminerplus.mode": "%s (estimated chain: %s)",
   "message.veinminerplus.broken": "VeinMiner: %s blocks",
   "veinminerplus.configuration.title": "VeinMinerPlus Settings",

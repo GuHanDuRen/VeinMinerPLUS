@@ -134,13 +134,14 @@ public final class ChainEvents {
         }
     }
 
-    @SubscribeEvent(priority = EventPriority.LOWEST)
+    // Capture the original block before mods such as Create consume the event.
+    // The guarded useItemOn below still runs the full interaction event pipeline.
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         if (!(event.getEntity() instanceof ServerPlayer player)
                 || event.isCanceled()
                 || RIGHT_CLICK_GUARD.contains(player.getUUID())
                 || !HELD_KEYS.contains(player.getUUID())
-                || PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode()) != ChainMode.USE_BLOCK
                 || ACTIVE_JOBS.containsKey(player.getUUID())
                 || ACTIVE_RIGHT_CLICK_JOBS.containsKey(player.getUUID())
                 || event.getItemStack().isEmpty()) {
@@ -151,6 +152,11 @@ public final class ChainEvents {
         BlockPos origin = event.getPos().immutable();
         BlockState state = level.getBlockState(origin);
         if (state.isAir() || !level.mayInteract(player, origin)) {
+            return;
+        }
+
+        ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
+        if (mode != ChainMode.USE_BLOCK && !(mode == ChainMode.NORMAL && state.is(BlockTags.LOGS))) {
             return;
         }
 
@@ -217,6 +223,9 @@ public final class ChainEvents {
         }
 
         ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
+        if (mode == ChainMode.XRAY) {
+            return;
+        }
         if (mode == ChainMode.USE_BLOCK && !isContainer(level, target, state)) {
             return;
         }
@@ -348,6 +357,9 @@ public final class ChainEvents {
 
     private static String eligibilityFailure(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
             Block targetBlock, ChainMode mode, Set<String> whitelist) {
+        if (mode == ChainMode.XRAY) {
+            return "mode unavailable";
+        }
         if (state.isAir()) {
             return "air";
         }

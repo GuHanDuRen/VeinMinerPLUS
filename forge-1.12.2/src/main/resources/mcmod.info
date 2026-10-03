@@ -1,0 +1,17 @@
+[
+{
+  "modid": "veinminerplus",
+  "name": "VeinMinerPlus",
+  "description": "${mod_description}",
+  "version": "${version}",
+  "mcversion": "${mcversion}",
+  "url": "",
+  "updateUrl": "",
+  "authorList": ["Extra_RawStyle"],
+  "credits": "",
+  "logoFile": "",
+  "screenshots": [],
+  "requiredMods": ["forge@[14.23.5.2860,)"],
+  "dependencies": []
+}
+]
