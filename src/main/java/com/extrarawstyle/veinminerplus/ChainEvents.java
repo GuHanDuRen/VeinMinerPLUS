@@ -64,6 +64,9 @@ public final class ChainEvents {
     // that crosses the stone/deepslate boundary must still chain as one deposit.
     // These host names are stripped from a block id before families are compared.
     private static final String ORE_SUFFIX = "_ore";
+    private static final String[] ORE_HOST_STONES = { "deepslate", "slate", "stone", "endstone", "netherrack",
+            "nether", "end", "other", "blackstone", "basalt", "tuff", "granite", "diorite", "andesite", "marble",
+            "limestone" };
 
     private static final TagKey<Block> ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.withDefaultNamespace("ores"));
@@ -72,6 +75,8 @@ public final class ChainEvents {
     private static final List<BlockPos> NORMAL_OFFSETS = createNormalOffsets();
     private static final Map<String, List<BlockPos>> BLAST_OFFSETS = new ConcurrentHashMap<>();
     private static final Map<Integer, List<ChunkOffset>> SPARSE_CHUNK_OFFSETS = new ConcurrentHashMap<>();
+    // Pure memoisation of oreFamilyKey; bounded by the size of the block registry.
+    private static final Map<Block, String> ORE_FAMILY_KEYS = new HashMap<>();
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
@@ -126,13 +131,14 @@ public final class ChainEvents {
         }
     }
 
-    @SubscribeEvent(priority = EventPriority.LOWEST)
+    // Capture the original block before mods such as Create consume the event.
+    // The guarded useItemOn below still runs the full interaction event pipeline.
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         if (!(event.getEntity() instanceof ServerPlayer player)
                 || event.isCanceled()
                 || RIGHT_CLICK_GUARD.contains(player.getUUID())
                 || !HELD_KEYS.contains(player.getUUID())
-                || PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode()) != ChainMode.USE_BLOCK
                 || ACTIVE_JOBS.containsKey(player.getUUID())
                 || ACTIVE_RIGHT_CLICK_JOBS.containsKey(player.getUUID())
                 || event.getItemStack().isEmpty()) {
@@ -143,6 +149,11 @@ public final class ChainEvents {
         BlockPos origin = event.getPos().immutable();
         BlockState state = level.getBlockState(origin);
         if (state.isAir() || !level.mayInteract(player, origin)) {
+            return;
+        }
+
+        ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
+        if (mode != ChainMode.USE_BLOCK && !(mode == ChainMode.NORMAL && state.is(BlockTags.LOGS))) {
             return;
         }
 
@@ -215,6 +226,9 @@ public final class ChainEvents {
         }
 
         ChainMode mode = PLAYER_MODES.getOrDefault(player.getUUID(), configuredDefaultMode());
+        if (mode == ChainMode.XRAY) {
+            return;
+        }
         if (mode == ChainMode.USE_BLOCK && !isContainer(level, target, state)) {
             return;
         }
@@ -339,6 +353,9 @@ public final class ChainEvents {
 
     private static String eligibilityFailure(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
             Block targetBlock, ChainMode mode, Set<String> whitelist) {
+        if (mode == ChainMode.XRAY) {
+            return "mode unavailable";
+        }
         if (state.isAir()) {
             return "air";
         }
@@ -456,9 +473,58 @@ public final class ChainEvents {
         return id != null && id.getPath().endsWith(ORE_SUFFIX);
     }
 
-    /** Matches the exact block type that started the chain. */
+    /**
+     * Same-block blast match. Ores that differ only by host stone belong to one
+     * deposit, so variants such as uranium_ore and deepslate_uranium_ore chain
+     * together instead of stopping at a stone boundary.
+     */
     private static boolean sameTarget(BlockState state, Block targetBlock) {
-        return state.getBlock() == targetBlock;
+        if (state.getBlock() == targetBlock) {
+            return true;
+        }
+        String targetFamily = oreFamilyKey(targetBlock);
+        return targetFamily != null && targetFamily.equals(oreFamilyKey(state.getBlock()));
+    }
+
+    /** Ore family of a block, or null when the block is not an ore. */
+    private static String oreFamilyKey(Block block) {
+        if (block == null) {
+            return null;
+        }
+        String cached = ORE_FAMILY_KEYS.get(block);
+        if (cached != null) {
+            return cached.isEmpty() ? null : cached;
+        }
+
+        String family = computeOreFamilyKey(block);
+        ORE_FAMILY_KEYS.put(block, family == null ? "" : family);
+        return family;
+    }
+
+    private static String computeOreFamilyKey(Block block) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
+        if (id == null) {
+            return null;
+        }
+        String path = id.getPath();
+        if (!path.endsWith(ORE_SUFFIX) || path.length() == ORE_SUFFIX.length()) {
+            return null;
+        }
+
+        String base = path.substring(0, path.length() - ORE_SUFFIX.length());
+        for (String host : ORE_HOST_STONES) {
+            String suffix = "_" + host;
+            if (base.length() > suffix.length() && base.endsWith(suffix)) {
+                base = base.substring(0, base.length() - suffix.length());
+                break;
+            }
+            String prefix = host + "_";
+            if (base.length() > prefix.length() && base.startsWith(prefix)) {
+                base = base.substring(prefix.length());
+                break;
+            }
+        }
+        return base.isEmpty() ? null : id.getNamespace() + ":" + base;
     }
 
     private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,

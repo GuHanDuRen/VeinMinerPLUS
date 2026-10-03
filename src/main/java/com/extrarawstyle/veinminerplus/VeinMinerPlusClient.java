@@ -60,6 +60,11 @@ public final class VeinMinerPlusClient {
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_ENTER,
             "key.categories.veinminerplus");
+    private static final KeyMapping XRAY_KEY = new KeyMapping(
+            "key.veinminerplus.xray",
+            InputConstants.Type.KEYSYM,
+            InputConstants.UNKNOWN.getValue(),
+            "key.categories.veinminerplus");
 
     private static ChainMode clientMode = ChainMode.NORMAL;
     private static int clientNormalLimit = Config.DEFAULT_MAX_NORMAL_BLOCKS;
@@ -84,6 +89,7 @@ public final class VeinMinerPlusClient {
         event.register(COPY_BLOCK_ID_KEY);
         event.register(COPY_ORE_TAGS_KEY);
         event.register(WHITELIST_SELECT_KEY);
+        event.register(XRAY_KEY);
     }
 
     @SubscribeEvent
@@ -102,6 +108,15 @@ public final class VeinMinerPlusClient {
         if (COPY_ORE_TAGS_KEY.matches(event.getKey(), event.getScanCode())) {
             if (event.getAction() == GLFW.GLFW_PRESS) {
                 copyOreTags();
+            }
+            return;
+        }
+
+        if (XRAY_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS && isInGame(Minecraft.getInstance())) {
+                clientMode = ChainMode.XRAY;
+                NetworkHandler.sendModeChange(clientMode);
+                Minecraft.getInstance().setScreen(new XraySelectionScreen());
             }
             return;
         }
@@ -272,6 +287,10 @@ public final class VeinMinerPlusClient {
         clientMode = mode;
     }
 
+    static boolean isXrayMode() {
+        return clientMode == ChainMode.XRAY;
+    }
+
     @SubscribeEvent
     public static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
         if (!isModeSelectorOpen() || event.getScrollDeltaY() == 0.0D) {
@@ -303,7 +322,13 @@ public final class VeinMinerPlusClient {
     public static void onClientTick(ClientTickEvent.Post event) {
         restorePendingWhitelistSelection();
         updateEstimatedChainCount(Minecraft.getInstance());
+        XrayClientState.tick(Minecraft.getInstance());
         syncKeyState();
+    }
+
+    @SubscribeEvent
+    public static void onRenderLevel(net.neoforged.neoforge.client.event.RenderLevelStageEvent event) {
+        XrayClientState.render(event);
     }
 
     private static void syncKeyState() {

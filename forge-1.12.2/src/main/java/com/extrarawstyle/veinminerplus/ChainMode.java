@@ -39,7 +39,10 @@ public enum ChainMode {
 
     public static ChainMode cycle(ChainMode current, int direction) {
         ChainMode[] modes = values();
-        int next = Math.floorMod(current.ordinal() + direction, modes.length);
+        int next = (current.ordinal() + direction) % modes.length;
+        if (next < 0) {
+            next += modes.length;
+        }
         return modes[next];
     }
 

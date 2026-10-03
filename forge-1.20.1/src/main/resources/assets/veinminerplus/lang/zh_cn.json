@@ -14,6 +14,7 @@
   "chain.veinminerplus.blast_ores": "爆破连锁：所有矿石",
   "chain.veinminerplus.blast_any": "爆破连锁：所有可挖方块",
   "chain.veinminerplus.blast_logs": "爆破伐木：原木",
+  "chain.veinminerplus.xray": "透视模式（预留）",
   "hud.veinminerplus.mode": "%s（预计连锁数量：%s）",
   "message.veinminerplus.broken": "连锁挖掘：%s 个方块",
   "veinminerplus.configuration.title": "VeinMinerPlus 设置",
