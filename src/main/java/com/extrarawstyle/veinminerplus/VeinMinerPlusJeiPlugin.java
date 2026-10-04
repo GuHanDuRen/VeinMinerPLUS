@@ -41,8 +41,8 @@ public final class VeinMinerPlusJeiPlugin implements IModPlugin {
                             return List.of();
                         }
 
-                        List<Target<I>> targets = new ArrayList<>(36);
-                        for (int index = 0; index < 36; index++) {
+                        List<Target<I>> targets = new ArrayList<>(XrayClientState.SLOT_COUNT);
+                        for (int index = 0; index < XrayClientState.SLOT_COUNT; index++) {
                             final int slot = index;
                             Rect2i area = screen.slotArea(slot);
                             targets.add(new Target<I>() {
