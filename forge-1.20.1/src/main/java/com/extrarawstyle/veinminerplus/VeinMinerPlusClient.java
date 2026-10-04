@@ -50,6 +50,11 @@ public final class VeinMinerPlusClient {
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_ENTER,
             "key.categories.veinminerplus");
+    static final KeyMapping XRAY_KEY = new KeyMapping(
+            "key.veinminerplus.xray",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_APOSTROPHE,
+            "key.categories.veinminerplus");
 
     static ChainMode clientMode = ChainMode.NORMAL;
     private static int clientNormalLimit = Config.DEFAULT_MAX_NORMAL_BLOCKS;
@@ -73,6 +78,7 @@ public final class VeinMinerPlusClient {
         event.register(COPY_BLOCK_ID_KEY);
         event.register(COPY_ORE_TAGS_KEY);
         event.register(WHITELIST_SELECT_KEY);
+        event.register(XRAY_KEY);
     }
 
     static void copyBlockId() {
@@ -228,6 +234,10 @@ public final class VeinMinerPlusClient {
         clientMode = mode;
     }
 
+    static boolean isXrayMode() {
+        return clientMode == ChainMode.XRAY;
+    }
+
     static void syncKeyState() {
         boolean held = isChainKeyActive(Minecraft.getInstance());
         if (held == keyStateSent) {
@@ -308,6 +318,8 @@ public final class VeinMinerPlusClient {
         return switch (mode) {
             case NORMAL -> Component.translatable("hud.veinminerplus.mode", name, estimatedCount);
             case USE_BLOCK -> Component.translatable("hud.veinminerplus.mode", name, interactionEstimate());
+            case XRAY -> XrayClientState.hasSelection() ? name
+                    : Component.translatable("hud.veinminerplus.xray_empty", name);
             default -> name;
         };
     }

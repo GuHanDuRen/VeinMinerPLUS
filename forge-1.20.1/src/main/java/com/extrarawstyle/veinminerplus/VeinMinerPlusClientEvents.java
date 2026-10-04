@@ -2,8 +2,10 @@ package com.extrarawstyle.veinminerplus;
 
 import org.lwjgl.glfw.GLFW;
 
+import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.InputEvent;
+import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.client.event.RenderGuiEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -30,6 +32,18 @@ public final class VeinMinerPlusClientEvents {
         if (VeinMinerPlusClient.COPY_ORE_TAGS_KEY.matches(event.getKey(), event.getScanCode())) {
             if (event.getAction() == GLFW.GLFW_PRESS) {
                 VeinMinerPlusClient.copyOreTags();
+            }
+            return;
+        }
+
+        if (VeinMinerPlusClient.XRAY_KEY.matches(event.getKey(), event.getScanCode())) {
+            if (event.getAction() == GLFW.GLFW_PRESS
+                    && Minecraft.getInstance().player != null
+                    && Minecraft.getInstance().level != null
+                    && Minecraft.getInstance().screen == null) {
+                VeinMinerPlusClient.clientMode = ChainMode.XRAY;
+                NetworkHandler.sendModeChange(VeinMinerPlusClient.clientMode);
+                Minecraft.getInstance().setScreen(new XraySelectionScreen());
             }
             return;
         }
@@ -69,7 +83,13 @@ public final class VeinMinerPlusClientEvents {
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
             VeinMinerPlusClient.restorePendingWhitelistSelection();
+            XrayClientState.tick(Minecraft.getInstance());
             VeinMinerPlusClient.syncKeyState();
         }
+    }
+
+    @SubscribeEvent
+    public static void onRenderLevel(RenderLevelStageEvent event) {
+        XrayClientState.render(event);
     }
 }
