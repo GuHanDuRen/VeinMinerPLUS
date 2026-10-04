@@ -51,6 +51,8 @@ public final class VeinMinerPlusClient {
             Keyboard.KEY_NONE, "key.categories.veinminerplus");
     static final KeyBinding WHITELIST_SELECT_KEY = new KeyBinding("key.veinminerplus.whitelist_select",
             Keyboard.KEY_RETURN, "key.categories.veinminerplus");
+    static final KeyBinding XRAY_KEY = new KeyBinding("key.veinminerplus.xray", Keyboard.KEY_APOSTROPHE,
+            "key.categories.veinminerplus");
     static ChainMode clientMode = ChainMode.NORMAL;
     private static int clientNormalLimit = Config.DEFAULT_MAX_NORMAL_BLOCKS;
     private static World estimatedWorld;
@@ -102,6 +104,7 @@ public final class VeinMinerPlusClient {
             }
             restorePendingWhitelistSelection(minecraft);
             syncKeyState();
+            XrayClientState.tick(minecraft);
         }
     }
 
@@ -111,6 +114,7 @@ public final class VeinMinerPlusClient {
             ClientRegistry.registerKeyBinding(COPY_BLOCK_ID_KEY);
             ClientRegistry.registerKeyBinding(COPY_ORE_TAGS_KEY);
             ClientRegistry.registerKeyBinding(WHITELIST_SELECT_KEY);
+            ClientRegistry.registerKeyBinding(XRAY_KEY);
             registered = true;
         }
     }
@@ -127,6 +131,13 @@ public final class VeinMinerPlusClient {
             // a later selection unexpectedly.
         }
         Minecraft minecraft = Minecraft.getMinecraft();
+        if (XRAY_KEY.isPressed() && minecraft.player != null && minecraft.world != null
+                && minecraft.currentScreen == null) {
+            clientMode = ChainMode.XRAY;
+            NetworkHandler.sendModeChange(clientMode);
+            minecraft.displayGuiScreen(new XraySelectionScreen());
+            return;
+        }
         if (minecraft.player != null && minecraft.world != null && minecraft.currentScreen == null) {
             if (COPY_BLOCK_ID_KEY.isPressed()) {
                 copyBlockId();
@@ -280,6 +291,10 @@ public final class VeinMinerPlusClient {
 
     static void setClientMode(ChainMode mode) {
         clientMode = mode;
+    }
+
+    static boolean isXrayMode() {
+        return clientMode == ChainMode.XRAY;
     }
 
     static void updateChainProgress(long sequence, boolean active, int count) {
