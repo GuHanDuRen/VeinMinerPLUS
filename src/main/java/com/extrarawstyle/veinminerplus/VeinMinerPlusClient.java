@@ -63,7 +63,7 @@ public final class VeinMinerPlusClient {
     private static final KeyMapping XRAY_KEY = new KeyMapping(
             "key.veinminerplus.xray",
             InputConstants.Type.KEYSYM,
-            InputConstants.UNKNOWN.getValue(),
+            GLFW.GLFW_KEY_APOSTROPHE,
             "key.categories.veinminerplus");
 
     private static ChainMode clientMode = ChainMode.NORMAL;
@@ -397,6 +397,8 @@ public final class VeinMinerPlusClient {
         return switch (mode) {
             case NORMAL -> Component.translatable("hud.veinminerplus.mode", name, estimatedCount);
             case USE_BLOCK -> Component.translatable("hud.veinminerplus.mode", name, interactionEstimate());
+            case XRAY -> XrayClientState.hasSelection() ? name
+                    : Component.translatable("hud.veinminerplus.xray_empty", name);
             default -> name;
         };
     }

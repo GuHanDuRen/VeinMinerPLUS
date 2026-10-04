@@ -1,42 +1,82 @@
 package com.extrarawstyle.veinminerplus;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.OptionalDouble;
 
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexFormat;
 
-import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.RenderStateShard;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
-
-import org.joml.Vector3f;
+import net.neoforged.fml.loading.FMLPaths;
 
 final class XrayClientState {
-    private static final int SLOT_COUNT = 36;
+    static final int SLOT_COUNT = 9;
+    static final int DEFAULT_COLOR = 0xFF5555;
+    private static final int[] DEFAULT_COLORS = {
+            0xFFAA00, 0xFF5555, 0xFFFF55, 0x55FF55, 0x55FFFF, 0x5599FF, 0xAA55FF, 0xFF55AA, 0xFFFFFF
+    };
     private static final int SEARCH_RADIUS = 48;
     private static final int CHUNK_RADIUS = (SEARCH_RADIUS + 15) >> 4;
     private static final int CHUNKS_PER_TICK = 2;
     private static final int MAX_RENDERED_BLOCKS = 2048;
 
-    private static final List<BlockPos> CHUNK_OFFSETS = createChunkOffsets();
-    private static final List<ItemStack> SELECTED_STACKS = new ArrayList<>();
-    private static final Set<String> SELECTED_FAMILIES = new HashSet<>();
-    private static final Map<Long, List<BlockPos>> MATCHES_BY_CHUNK = new HashMap<>();
+    private static final RenderType XRAY_RENDER_TYPE = RenderType.create("veinminerplus_xray_outline",
+            DefaultVertexFormat.POSITION_COLOR_NORMAL, VertexFormat.Mode.LINES, RenderType.SMALL_BUFFER_SIZE,
+            RenderType.CompositeState.builder()
+                    .setShaderState(RenderStateShard.RENDERTYPE_LINES_SHADER)
+                    .setLineState(new RenderStateShard.LineStateShard(OptionalDouble.of(2.0)))
+                    .setCullState(RenderStateShard.NO_CULL)
+                    // Apply this at draw time so terrain cannot hide the outline.
+                    .setDepthTestState(new RenderStateShard.DepthTestStateShard("always", org.lwjgl.opengl.GL11.GL_ALWAYS) {
+                        @Override
+                        public void setupRenderState() {
+                            RenderSystem.disableDepthTest();
+                        }
 
-    private static String scanFamilySignature = "";
+                        @Override
+                        public void clearRenderState() {
+                            RenderSystem.enableDepthTest();
+                        }
+                    })
+                    .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .createCompositeState(false));
+
+    private static final List<BlockPos> CHUNK_OFFSETS = createChunkOffsets();
+    private static final List<Selection> SELECTION = new ArrayList<>();
+    private static final Map<Block, Integer> SELECTED_BLOCK_COLORS = new HashMap<>();
+    private static final Map<Long, List<BlockPos>> MATCHES_BY_CHUNK = new HashMap<>();
+    private static boolean selectionLoaded;
+
+    private static ClientLevel scanLevel;
     private static int nextChunkOffset;
     private static int centerChunkX;
     private static int centerChunkZ;
@@ -46,60 +86,132 @@ final class XrayClientState {
     private XrayClientState() {
     }
 
-    static List<ItemStack> selectedStacks() {
-        List<ItemStack> copy = new ArrayList<>(SELECTED_STACKS.size());
-        for (ItemStack stack : SELECTED_STACKS) {
-            copy.add(stack.copy());
+    record Selection(ItemStack stack, int color) {
+    }
+
+    static int defaultColor(int index) {
+        return DEFAULT_COLORS[index];
+    }
+
+    static List<Selection> selection() {
+        loadSelection();
+        List<Selection> copy = new ArrayList<>(SLOT_COUNT);
+        for (Selection entry : SELECTION) {
+            copy.add(new Selection(entry.stack().copy(), entry.color()));
         }
         return copy;
     }
 
-    static void setSelectedStacks(List<ItemStack> stacks) {
-        SELECTED_STACKS.clear();
-        SELECTED_FAMILIES.clear();
-        for (ItemStack stack : stacks) {
-            String family = familyForStack(stack);
-            if (family != null && SELECTED_FAMILIES.add(family)) {
-                SELECTED_STACKS.add(stack.copyWithCount(1));
-                if (SELECTED_STACKS.size() >= SLOT_COUNT) {
-                    break;
-                }
+    static void setSelection(List<Selection> entries) {
+        selectionLoaded = true;
+        applySelection(entries);
+        saveSelection();
+    }
+
+    private static void applySelection(List<Selection> entries) {
+        SELECTION.clear();
+        SELECTED_BLOCK_COLORS.clear();
+        for (int index = 0; index < SLOT_COUNT; index++) {
+            Selection entry = index < entries.size() ? entries.get(index) : new Selection(ItemStack.EMPTY, defaultColor(index));
+            Block block = blockForStack(entry.stack());
+            boolean valid = OreFamily.key(block) != null;
+            int color = entry.color() & 0xFFFFFF;
+            SELECTION.add(new Selection(valid ? entry.stack().copyWithCount(1) : ItemStack.EMPTY, color));
+            if (valid) {
+                SELECTED_BLOCK_COLORS.putIfAbsent(block, color);
             }
         }
         invalidateScan();
     }
 
-    static String familyForStack(ItemStack stack) {
+    private static Path selectionFile() {
+        return FMLPaths.CONFIGDIR.get().resolve("veinminerplus-xray.json");
+    }
+
+    private static void loadSelection() {
+        if (selectionLoaded) {
+            return;
+        }
+        selectionLoaded = true;
+        List<Selection> entries = new ArrayList<>();
+        Path file = selectionFile();
+        if (Files.isRegularFile(file)) {
+            try (Reader reader = Files.newBufferedReader(file)) {
+                for (JsonElement element : JsonParser.parseReader(reader).getAsJsonArray()) {
+                    if (entries.size() >= SLOT_COUNT) {
+                        break;
+                    }
+                    JsonObject value = element.getAsJsonObject();
+                    ResourceLocation id = value.has("item") ? ResourceLocation.tryParse(value.get("item").getAsString()) : null;
+                    ItemStack stack = id == null ? ItemStack.EMPTY : BuiltInRegistries.ITEM.get(id).getDefaultInstance();
+                    int color = value.has("color") ? value.get("color").getAsInt() : defaultColor(entries.size());
+                    // Old versions saved every untouched slot as red. Mark new saves so a custom red stays red.
+                    if (!value.has("colorDefaultsVersion") && color == DEFAULT_COLOR) {
+                        color = defaultColor(entries.size());
+                    }
+                    entries.add(new Selection(stack, color));
+                }
+            } catch (IOException | RuntimeException exception) {
+                VeinMinerPlus.LOGGER.warn("Could not load x-ray selections from {}", file, exception);
+            }
+        }
+        applySelection(entries);
+    }
+
+    private static void saveSelection() {
+        JsonArray values = new JsonArray();
+        for (Selection entry : SELECTION) {
+            JsonObject value = new JsonObject();
+            if (!entry.stack().isEmpty()) {
+                value.addProperty("item", BuiltInRegistries.ITEM.getKey(entry.stack().getItem()).toString());
+            }
+            value.addProperty("color", entry.color());
+            value.addProperty("colorDefaultsVersion", 1);
+            values.add(value);
+        }
+        Path file = selectionFile();
+        try {
+            Files.createDirectories(file.getParent());
+            try (Writer writer = Files.newBufferedWriter(file)) {
+                new GsonBuilder().setPrettyPrinting().create().toJson(values, writer);
+            }
+        } catch (IOException exception) {
+            VeinMinerPlus.LOGGER.warn("Could not save x-ray selections to {}", file, exception);
+        }
+    }
+
+    private static Block blockForStack(ItemStack stack) {
         if (stack == null || stack.isEmpty()) {
             return null;
         }
-        for (Block block : net.minecraft.core.registries.BuiltInRegistries.BLOCK) {
+        for (Block block : BuiltInRegistries.BLOCK) {
             if (block.asItem() == stack.getItem()) {
-                String family = OreFamily.key(block);
-                if (family != null) {
-                    return family;
-                }
+                return block;
             }
         }
         return null;
     }
 
     static boolean canAccept(ItemStack stack) {
-        return familyForStack(stack) != null;
+        return OreFamily.key(blockForStack(stack)) != null;
+    }
+
+    static boolean hasSelection() {
+        loadSelection();
+        return !SELECTED_BLOCK_COLORS.isEmpty();
     }
 
     static void tick(Minecraft minecraft) {
         if (!VeinMinerPlusClient.isXrayMode() || minecraft.level == null || minecraft.player == null
-                || SELECTED_FAMILIES.isEmpty()) {
+                || !hasSelection()) {
             invalidateScan();
             return;
         }
 
         int chunkX = minecraft.player.blockPosition().getX() >> 4;
         int chunkZ = minecraft.player.blockPosition().getZ() >> 4;
-        String signature = String.join("|", SELECTED_FAMILIES);
-        if (!signature.equals(scanFamilySignature) || chunkX != lastPlayerChunkX || chunkZ != lastPlayerChunkZ) {
-            scanFamilySignature = signature;
+        if (minecraft.level != scanLevel || chunkX != lastPlayerChunkX || chunkZ != lastPlayerChunkZ) {
+            scanLevel = minecraft.level;
             centerChunkX = chunkX;
             centerChunkZ = chunkZ;
             lastPlayerChunkX = chunkX;
@@ -108,8 +220,10 @@ final class XrayClientState {
             MATCHES_BY_CHUNK.clear();
         }
 
-        for (int i = 0; i < CHUNKS_PER_TICK && nextChunkOffset < CHUNK_OFFSETS.size(); i++) {
-            BlockPos offset = CHUNK_OFFSETS.get(nextChunkOffset++);
+        // Keep revisiting chunks so descending, late chunk loads and new ores refresh the results.
+        for (int i = 0; i < CHUNKS_PER_TICK; i++) {
+            BlockPos offset = CHUNK_OFFSETS.get(nextChunkOffset);
+            nextChunkOffset = (nextChunkOffset + 1) % CHUNK_OFFSETS.size();
             scanChunk(minecraft, centerChunkX + offset.getX(), centerChunkZ + offset.getZ());
         }
 
@@ -121,17 +235,15 @@ final class XrayClientState {
     }
 
     private static void scanChunk(Minecraft minecraft, int chunkX, int chunkZ) {
+        long key = chunkKey(chunkX, chunkZ);
         if (!minecraft.level.hasChunkAt(new BlockPos(chunkX << 4, 0, chunkZ << 4))) {
+            MATCHES_BY_CHUNK.remove(key);
             return;
         }
 
-        long key = chunkKey(chunkX, chunkZ);
         List<BlockPos> matches = new ArrayList<>();
         minecraft.level.getChunk(chunkX, chunkZ).findBlocks(
-                state -> {
-                    String family = OreFamily.key(state.getBlock());
-                    return family != null && SELECTED_FAMILIES.contains(family);
-                }, (pos, state) -> {
+                state -> SELECTED_BLOCK_COLORS.containsKey(state.getBlock()), (pos, state) -> {
                     if (withinRadius(minecraft, pos)) {
                         matches.add(pos.immutable());
                     }
@@ -144,8 +256,8 @@ final class XrayClientState {
     }
 
     static void render(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS
-                || !VeinMinerPlusClient.isXrayMode() || SELECTED_FAMILIES.isEmpty()) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_LEVEL
+                || !VeinMinerPlusClient.isXrayMode() || SELECTED_BLOCK_COLORS.isEmpty()) {
             return;
         }
 
@@ -154,42 +266,53 @@ final class XrayClientState {
             return;
         }
 
-        Camera camera = event.getCamera();
-        Vector3f cameraPosition = camera.getPosition().toVector3f();
-        PoseStack pose = event.getPoseStack();
+        Vec3 cameraPosition = event.getCamera().getPosition();
+        // AFTER_LEVEL runs after vanilla has popped the world model-view matrix.
+        PoseStack pose = new PoseStack();
+        pose.mulPose(event.getModelViewMatrix());
         MultiBufferSource.BufferSource buffers = minecraft.renderBuffers().bufferSource();
         int rendered = 0;
-        RenderSystem.disableDepthTest();
         try {
             for (List<BlockPos> matches : MATCHES_BY_CHUNK.values()) {
                 for (BlockPos pos : matches) {
-                    if (rendered++ >= MAX_RENDERED_BLOCKS) {
+                    if (rendered >= MAX_RENDERED_BLOCKS) {
                         break;
                     }
-                    BlockState state = minecraft.level.getBlockState(pos);
-                    String family = OreFamily.key(state.getBlock());
-                    if (family == null || !SELECTED_FAMILIES.contains(family)) {
+                    if (!withinRadius(minecraft, pos) || !minecraft.level.hasChunkAt(pos)) {
                         continue;
                     }
+                    BlockState state = minecraft.level.getBlockState(pos);
+                    if (!SELECTED_BLOCK_COLORS.containsKey(state.getBlock())) {
+                        continue;
+                    }
+                    rendered++;
                     pose.pushPose();
-                    pose.translate(pos.getX() - cameraPosition.x(), pos.getY() - cameraPosition.y(),
-                            pos.getZ() - cameraPosition.z());
-                    minecraft.getBlockRenderer().renderSingleBlock(state, pose, buffers, LightTexture.FULL_BRIGHT,
-                            OverlayTexture.NO_OVERLAY);
-                    pose.popPose();
+                    try {
+                        pose.translate(pos.getX() - cameraPosition.x, pos.getY() - cameraPosition.y,
+                                pos.getZ() - cameraPosition.z);
+                        int color = colorForBlock(state.getBlock());
+                        LevelRenderer.renderLineBox(pose, buffers.getBuffer(XRAY_RENDER_TYPE), 0, 0, 0, 1, 1, 1,
+                                ((color >> 16) & 255) / 255.0F, ((color >> 8) & 255) / 255.0F,
+                                (color & 255) / 255.0F, 1.0F);
+                    } finally {
+                        pose.popPose();
+                    }
                 }
                 if (rendered >= MAX_RENDERED_BLOCKS) {
                     break;
                 }
             }
         } finally {
-            buffers.endBatch();
-            RenderSystem.enableDepthTest();
+            buffers.endBatch(XRAY_RENDER_TYPE);
         }
     }
 
+    private static int colorForBlock(Block block) {
+        return SELECTED_BLOCK_COLORS.getOrDefault(block, DEFAULT_COLOR);
+    }
+
     private static void invalidateScan() {
-        scanFamilySignature = "";
+        scanLevel = null;
         MATCHES_BY_CHUNK.clear();
         nextChunkOffset = 0;
     }
