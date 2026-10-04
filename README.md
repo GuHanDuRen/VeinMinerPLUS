@@ -123,3 +123,4 @@ NeoForge 1.21.1 版本还提供矿石透视：用彩色空心方框标记选中�
 | Forge 1.12.2 连锁规则 | `config/veinminerplus.cfg` |
 | NeoForge 客户端透视选择与颜色 | `config/veinminerplus-xray.json` |
 
+反馈群1018656285
