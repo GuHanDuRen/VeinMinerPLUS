@@ -1072,9 +1072,7 @@ public final class ChainEvents {
                     examined.add(origin);
                     frontier.addLast(new SearchNode(origin));
                 }
-                player.sendStatusMessage(new TextComponentTranslation(
-                        "message.veinminerplus.blast_radius_reduced",
-                        String.format(java.util.Locale.ROOT, "%.1f", tps), oldDistance, blastDistance), true);
+                NetworkHandler.sendLowTpsRadiusNotice(player, tps, oldDistance, blastDistance);
             } else {
                 player.sendStatusMessage(new TextComponentTranslation(
                         "message.veinminerplus.blast_radius_too_large",

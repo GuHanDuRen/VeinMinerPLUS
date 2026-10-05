@@ -15,15 +15,19 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 
 public final class VeinMinerConfigScreen extends Screen {
-    private static final int WHITELIST_ROW_HEIGHT = 20;
+    private static final int WHITELIST_ROW_HEIGHT = 22;
+    private static final int CONTROL_HEIGHT = 20;
+    private static final int SECTION_HEADER_HEIGHT = 20;
     private static final int WHITELIST_VISIBLE_ROWS = 5;
     private static final int WHITELIST_MAX_ROWS = Config.MAX_WHITELIST_ENTRIES + 1;
     private static final int WHITELIST_CONTROL_GAP = 4;
     private static final int WHITELIST_CONTROL_WIDTH = 20;
-    private static final int PANEL_COLOR = 0x78000000;
-    private static final int PANEL_BORDER_COLOR = 0x60505050;
-    private static final int HEADER_COLOR = 0x40303030;
-    private static final int MUTED_TEXT_COLOR = 0xFFB8B8B8;
+    private static final int PANEL_COLOR = 0xF018242D;
+    private static final int PANEL_BORDER_COLOR = 0xFF2B414C;
+    private static final int HEADER_COLOR = 0xFF1D3039;
+    private static final int ACCENT_COLOR = 0xFF59D8BC;
+    private static final int TEXT_COLOR = 0xFFE5EEF2;
+    private static final int MUTED_TEXT_COLOR = 0xFF96ADB7;
 
     private final NetworkHandler.ConfigSnapshotPayload initial;
     private final List<LabeledField> fields = new ArrayList<>();
@@ -53,6 +57,7 @@ public final class VeinMinerConfigScreen extends Screen {
     private Button autoReduceRadiusButton;
     private Button consumeHungerButton;
     private Button modeButton;
+    private Button doneButton;
     private double scrollOffset;
     private int maxScroll;
     private int viewportLeft;
@@ -88,21 +93,21 @@ public final class VeinMinerConfigScreen extends Screen {
         panelWidth = Math.min(560, Math.max(260, width - 24));
         panelX = (width - panelWidth) / 2;
         viewportLeft = panelX;
-        viewportTop = 38;
+        viewportTop = 46;
         viewportRight = panelX + panelWidth;
-        viewportBottom = Math.max(viewportTop + 80, height - 34);
+        viewportBottom = Math.max(viewportTop + 40, height - 36);
 
-        int contentX = panelX + 8;
-        int contentWidth = panelWidth - 16;
+        int contentX = panelX + 12;
+        int contentWidth = panelWidth - 24;
         boolean compactGrid = width >= 390;
-        int cellGap = compactGrid ? 8 : 0;
+        int cellGap = compactGrid ? 12 : 0;
         int cellWidth = compactGrid ? (contentWidth - cellGap) / 2 : contentWidth;
         int secondX = compactGrid ? contentX + cellWidth + cellGap : contentX;
-        int top = 42;
-        int headerHeight = 14;
-        int rowHeight = 20;
-        int sectionPadding = 6;
-        int sectionGap = 5;
+        int top = 50;
+        int headerHeight = SECTION_HEADER_HEIGHT;
+        int rowHeight = 24;
+        int sectionPadding = 8;
+        int sectionGap = 8;
 
         int normalRows = compactGrid ? 1 : 2;
         int blastRows = compactGrid ? 3 : 5;
@@ -147,7 +152,7 @@ public final class VeinMinerConfigScreen extends Screen {
             manhattan = !manhattan;
             button.setMessage(toggleText("screen.veinminerplus.config.manhattan", manhattan));
         }).bounds(compactGrid ? secondX : contentX,
-                compactGrid ? blastRowTwo : blastRowOne + rowHeight * 3, cellWidth, 20).build(),
+                compactGrid ? blastRowTwo : blastRowOne + rowHeight * 3, cellWidth, 20).build(StyledButton::new),
                 compactGrid ? blastRowTwo : blastRowOne + rowHeight * 3);
         helpAreas.add(new HelpArea(compactGrid ? secondX : contentX,
                  compactGrid ? blastRowTwo : blastRowOne + rowHeight * 3, cellWidth, 20,
@@ -163,7 +168,7 @@ public final class VeinMinerConfigScreen extends Screen {
             autoReduceRadius = !autoReduceRadius;
             button.setMessage(toggleText("screen.veinminerplus.config.auto_radius", autoReduceRadius));
         }).bounds(compactGrid ? secondX : contentX,
-                compactGrid ? performanceRow : performanceRow + rowHeight, cellWidth, 20).build(),
+                compactGrid ? performanceRow : performanceRow + rowHeight, cellWidth, 20).build(StyledButton::new),
                 compactGrid ? performanceRow : performanceRow + rowHeight);
         helpAreas.add(new HelpArea(compactGrid ? secondX : contentX,
                 compactGrid ? performanceRow : performanceRow + rowHeight, cellWidth, 20,
@@ -173,14 +178,14 @@ public final class VeinMinerConfigScreen extends Screen {
         consumeHungerButton = addContentButton(Button.builder(toggleText("screen.veinminerplus.config.consume_hunger", consumeHunger), button -> {
             consumeHunger = !consumeHunger;
             button.setMessage(toggleText("screen.veinminerplus.config.consume_hunger", consumeHunger));
-        }).bounds(contentX, behaviorRow, cellWidth, 20).build(), behaviorRow);
+        }).bounds(contentX, behaviorRow, cellWidth, 20).build(StyledButton::new), behaviorRow);
         helpAreas.add(new HelpArea(contentX, behaviorRow, cellWidth, 20,
                 "screen.veinminerplus.config.hunger.description"));
         modeButton = addContentButton(Button.builder(modeText(), button -> {
             mode = ChainMode.cycle(mode, 1);
             button.setMessage(modeText());
         }).bounds(compactGrid ? secondX : contentX,
-                compactGrid ? behaviorRow : behaviorRow + rowHeight, cellWidth, 20).build(),
+                compactGrid ? behaviorRow : behaviorRow + rowHeight, cellWidth, 20).build(StyledButton::new),
                 compactGrid ? behaviorRow : behaviorRow + rowHeight);
         helpAreas.add(new HelpArea(compactGrid ? secondX : contentX,
                 compactGrid ? behaviorRow : behaviorRow + rowHeight, cellWidth, 20,
@@ -197,13 +202,13 @@ public final class VeinMinerConfigScreen extends Screen {
         initializeWhitelistRows();
         int whitelistAddX = whitelistRemoveX + WHITELIST_CONTROL_WIDTH + WHITELIST_CONTROL_GAP;
         addContentButton(Button.builder(Component.literal("+"), button -> beginWhitelistSelection())
-                .bounds(whitelistAddX, whitelistBaseY, WHITELIST_CONTROL_WIDTH, WHITELIST_ROW_HEIGHT).build(),
+                .bounds(whitelistAddX, whitelistBaseY, WHITELIST_CONTROL_WIDTH, CONTROL_HEIGHT).build(StyledButton::new),
                 whitelistBaseY);
         helpAreas.add(new HelpArea(contentX, whitelistBaseY, contentWidth,
                 WHITELIST_VISIBLE_ROWS * WHITELIST_ROW_HEIGHT,
                 "screen.veinminerplus.config.whitelist.description"));
 
-        int footerGap = 4;
+        int footerGap = 6;
         int actionWidth = Math.min(104, Math.max(64, (width - 24 - footerGap * 2) / 3));
         int footerTotalWidth = actionWidth * 3 + footerGap * 2;
         footerLeft = (width - footerTotalWidth) / 2;
@@ -211,11 +216,11 @@ public final class VeinMinerConfigScreen extends Screen {
         footerTop = height - 26;
         Button resetButton = addRenderableWidget(
                 Button.builder(Component.translatable("screen.veinminerplus.config.reset_defaults"), button -> resetDefaults())
-                        .bounds(footerLeft, footerTop, actionWidth, 20).build());
-        Button doneButton = addRenderableWidget(Button.builder(Component.translatable("gui.done"), button -> save())
-                .bounds(footerLeft + actionWidth + footerGap, footerTop, actionWidth, 20).build());
+                        .bounds(footerLeft, footerTop, actionWidth, 20).build(StyledButton::new));
+        doneButton = addRenderableWidget(Button.builder(Component.translatable("gui.done"), button -> save())
+                .bounds(footerLeft + actionWidth + footerGap, footerTop, actionWidth, 20).build(StyledButton::new));
         Button cancelButton = addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose())
-                .bounds(footerLeft + (actionWidth + footerGap) * 2, footerTop, actionWidth, 20).build());
+                .bounds(footerLeft + (actionWidth + footerGap) * 2, footerTop, actionWidth, 20).build(StyledButton::new));
         footerRenderables.add(resetButton);
         footerRenderables.add(doneButton);
         footerRenderables.add(cancelButton);
@@ -253,7 +258,7 @@ public final class VeinMinerConfigScreen extends Screen {
         whitelistRows.clear();
         whitelistRemoveButtons.clear();
         for (int index = 0; index < WHITELIST_MAX_ROWS; index++) {
-            EditBox row = new EditBox(font, whitelistX, whitelistBaseY, whitelistWidth, WHITELIST_ROW_HEIGHT,
+            EditBox row = new StyledEditBox(whitelistX, whitelistBaseY, whitelistWidth, CONTROL_HEIGHT,
                     Component.translatable("screen.veinminerplus.config.whitelist"));
             row.setMaxLength(Config.MAX_WHITELIST_ENTRY_LENGTH);
             row.setValue(index < whitelistLineCount ? lines.get(index) : "");
@@ -263,8 +268,8 @@ public final class VeinMinerConfigScreen extends Screen {
 
             int rowIndex = index;
             Button removeButton = Button.builder(Component.literal("-"), button -> removeWhitelistEntry(rowIndex))
-                    .bounds(whitelistRemoveX, whitelistBaseY, WHITELIST_CONTROL_WIDTH, WHITELIST_ROW_HEIGHT)
-                    .build();
+                    .bounds(whitelistRemoveX, whitelistBaseY, WHITELIST_CONTROL_WIDTH, CONTROL_HEIGHT)
+                    .build(StyledButton::new);
             addRenderableWidget(removeButton);
             contentRenderables.add(removeButton);
             whitelistRemoveButtons.add(removeButton);
@@ -403,7 +408,7 @@ public final class VeinMinerConfigScreen extends Screen {
     private void addField(String translationKey, int value, int min, int max, int x, int baseY, int cellWidth) {
         int boxWidth = Math.min(84, Math.max(64, cellWidth / 3));
         int boxX = x + cellWidth - boxWidth - 4;
-        EditBox box = new EditBox(font, boxX, baseY, boxWidth, 20, Component.translatable(translationKey));
+        EditBox box = new StyledEditBox(boxX, baseY, boxWidth, CONTROL_HEIGHT, Component.translatable(translationKey));
         int index = fields.size();
         String draftValue = index < draftValues.size() ? draftValues.get(index) : Integer.toString(value);
         box.setValue(draftValue);
@@ -547,15 +552,25 @@ public final class VeinMinerConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (!insideContentViewport(mouseX, mouseY) && !insideFooter(mouseX, mouseY)) {
+        if (insideFooter(mouseX, mouseY)) {
+            for (Renderable renderable : footerRenderables) {
+                if (renderable instanceof AbstractWidget widget && widget.mouseClicked(mouseX, mouseY, button)) {
+                    setFocused(widget);
+                    if (button == 0) {
+                        setDragging(true);
+                    }
+                    return true;
+                }
+            }
             return false;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return insideContentViewport(mouseX, mouseY) && super.mouseClicked(mouseX, mouseY, button);
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics, mouseX, mouseY, partialTick);
+        graphics.fill(0, 0, width, height, 0xA0101820);
         drawHeader(graphics);
 
         graphics.enableScissor(viewportLeft, viewportTop, viewportRight, viewportBottom);
@@ -571,6 +586,8 @@ public final class VeinMinerConfigScreen extends Screen {
         drawWhitelistScrollbar(graphics);
         graphics.disableScissor();
 
+        graphics.fill(panelX, height - 32, panelX + panelWidth, height, 0xED101820);
+        graphics.fill(panelX, height - 32, panelX + panelWidth, height - 31, PANEL_BORDER_COLOR);
         for (Renderable renderable : footerRenderables) {
             renderable.render(graphics, mouseX, mouseY, partialTick);
         }
@@ -586,35 +603,21 @@ public final class VeinMinerConfigScreen extends Screen {
     }
 
     private void drawPanels(GuiGraphics graphics) {
-        if (sections.isEmpty()) {
-            return;
-        }
-
         int offset = (int) Math.round(scrollOffset);
-        int top = sections.get(0).baseY() - offset;
-        SectionArea last = sections.get(sections.size() - 1);
-        int bottom = last.baseY() + last.height() - offset;
-        int right = panelX + panelWidth;
-        graphics.fill(panelX, top, right, bottom, PANEL_COLOR);
-        graphics.fill(panelX, top, right, top + 1, PANEL_BORDER_COLOR);
-        graphics.fill(panelX, bottom - 1, right, bottom, PANEL_BORDER_COLOR);
-        graphics.fill(panelX, top, panelX + 1, bottom, PANEL_BORDER_COLOR);
-        graphics.fill(right - 1, top, right, bottom, PANEL_BORDER_COLOR);
-        for (int index = 0; index < sections.size(); index++) {
-            SectionArea section = sections.get(index);
+        for (SectionArea section : sections) {
             int y = section.baseY() - offset;
-            graphics.fill(panelX + 1, y, right - 1, y + 14, HEADER_COLOR);
-            if (index > 0) {
-                graphics.fill(panelX + 8, y - 3, right - 8, y - 2, PANEL_BORDER_COLOR);
-            }
+            int right = section.x() + section.width();
+            drawFrame(graphics, section.x(), y, section.width(), section.height(), PANEL_COLOR, PANEL_BORDER_COLOR);
+            graphics.fill(section.x() + 1, y + 1, right - 1, y + SECTION_HEADER_HEIGHT - 4, HEADER_COLOR);
+            graphics.fill(section.x() + 1, y + 1, section.x() + 3, y + SECTION_HEADER_HEIGHT - 4, ACCENT_COLOR);
         }
     }
 
     private void drawSectionTitles(GuiGraphics graphics) {
         int offset = (int) Math.round(scrollOffset);
         for (SectionArea section : sections) {
-            graphics.drawString(font, Component.translatable(section.translationKey()), section.x() + 8,
-                    section.baseY() - offset + 3, 0xFFFFFFFF, false);
+            graphics.drawString(font, Component.translatable(section.translationKey()), section.x() + 12,
+                    section.baseY() - offset + 5, ACCENT_COLOR, false);
         }
     }
 
@@ -624,7 +627,7 @@ public final class VeinMinerConfigScreen extends Screen {
         int labelWidth = Math.max(40, field.cellWidth() - field.box().getWidth() - 12);
         String label = Component.translatable(field.translationKey()).getString();
         graphics.drawString(font, font.plainSubstrByWidth(label, labelWidth), field.x() + 4, y + 6,
-                0xFFFFFFFF, false);
+                TEXT_COLOR, false);
     }
 
     private void drawWhitelistLabel(GuiGraphics graphics) {
@@ -635,7 +638,7 @@ public final class VeinMinerConfigScreen extends Screen {
         int y = whitelistBaseY - offset;
         String label = Component.translatable("screen.veinminerplus.config.whitelist").getString();
         graphics.drawString(font, font.plainSubstrByWidth(label, whitelistLabelWidth), whitelistLabelX, y + 6,
-                0xFFFFFFFF, false);
+                TEXT_COLOR, false);
     }
 
     private void drawWhitelistScrollbar(GuiGraphics graphics) {
@@ -654,14 +657,16 @@ public final class VeinMinerConfigScreen extends Screen {
         int thumbHeight = Math.max(12, trackHeight * WHITELIST_VISIBLE_ROWS / whitelistLineCount);
         int travel = Math.max(0, trackHeight - thumbHeight);
         int thumbY = top + (int) Math.round(travel * (double) whitelistScrollRow / max);
-        graphics.fill(trackX, top, trackX + 2, bottom, 0x50505050);
-        graphics.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, 0xC0D0D0D0);
+        graphics.fill(trackX, top, trackX + 2, bottom, PANEL_BORDER_COLOR);
+        graphics.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, ACCENT_COLOR);
     }
 
     private void drawHeader(GuiGraphics graphics) {
-        graphics.drawCenteredString(font, title, width / 2, 10, 0xFFFFFFFF);
+        graphics.fill(panelX, 6, panelX + panelWidth, 40, 0xED101820);
+        graphics.fill(panelX, 6, panelX + 3, 40, ACCENT_COLOR);
+        graphics.drawCenteredString(font, title, width / 2, 12, TEXT_COLOR);
         graphics.drawCenteredString(font, Component.translatable("screen.veinminerplus.config.subtitle"),
-                width / 2, 24, MUTED_TEXT_COLOR);
+                width / 2, 28, MUTED_TEXT_COLOR);
     }
 
     private void drawScrollbar(GuiGraphics graphics) {
@@ -675,8 +680,64 @@ public final class VeinMinerConfigScreen extends Screen {
         int thumbHeight = Math.max(20, trackHeight * trackHeight / contentHeight);
         int travel = trackHeight - thumbHeight;
         int thumbY = viewportTop + (int) Math.round(travel * scrollOffset / maxScroll);
-        graphics.fill(trackX, viewportTop, trackX + 3, viewportBottom, 0x50505050);
-        graphics.fill(trackX, thumbY, trackX + 3, thumbY + thumbHeight, 0xC0D0D0D0);
+        graphics.fill(trackX, viewportTop, trackX + 3, viewportBottom, PANEL_BORDER_COLOR);
+        graphics.fill(trackX, thumbY, trackX + 3, thumbY + thumbHeight, ACCENT_COLOR);
+    }
+
+    private static void drawFrame(GuiGraphics graphics, int x, int y, int width, int height, int fill, int border) {
+        graphics.fill(x, y, x + width, y + height, border);
+        graphics.fill(x + 1, y + 1, x + width - 1, y + height - 1, fill);
+    }
+
+    private final class StyledButton extends Button {
+        private StyledButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+            boolean highlighted = isHoveredOrFocused();
+            boolean primary = this == doneButton;
+            boolean enabledToggle = (this == manhattanButton && manhattan)
+                    || (this == autoReduceRadiusButton && autoReduceRadius)
+                    || (this == consumeHungerButton && consumeHunger);
+            int fill = primary ? (highlighted ? 0xFF82E5CE : ACCENT_COLOR)
+                    : (highlighted ? 0xFF2D4855 : 0xFF21333E);
+            int border = highlighted || primary ? ACCENT_COLOR : PANEL_BORDER_COLOR;
+            drawFrame(graphics, getX(), getY(), getWidth(), getHeight(), fill, border);
+            if (this == manhattanButton || this == autoReduceRadiusButton || this == consumeHungerButton) {
+                graphics.fill(getX() + 1, getY() + 4, getX() + 3, getY() + getHeight() - 4,
+                        enabledToggle ? ACCENT_COLOR : MUTED_TEXT_COLOR);
+            }
+            int color = !active ? MUTED_TEXT_COLOR : primary ? 0xFF101820 : enabledToggle ? ACCENT_COLOR : TEXT_COLOR;
+            renderScrollingString(graphics, font, 6, color);
+        }
+    }
+
+    private final class StyledEditBox extends EditBox {
+        private StyledEditBox(int x, int y, int width, int height, Component message) {
+            super(VeinMinerConfigScreen.this.font, x, y, width, height, message);
+            setTextColor(TEXT_COLOR);
+            setTextColorUneditable(MUTED_TEXT_COLOR);
+        }
+
+        @Override
+        public int getInnerWidth() {
+            return getWidth() - 8;
+        }
+
+        @Override
+        public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+            drawFrame(graphics, getX(), getY(), getWidth(), getHeight(), 0xFF101A22,
+                    isFocused() ? ACCENT_COLOR : PANEL_BORDER_COLOR);
+            // Keep native cursor, selection and input behavior, replacing only the frame.
+            setBordered(false);
+            graphics.pose().pushPose();
+            graphics.pose().translate(4, (getHeight() - 8) / 2, 0);
+            super.renderWidget(graphics, mouseX, mouseY, partialTick);
+            graphics.pose().popPose();
+            setBordered(true);
+        }
     }
 
     @Override

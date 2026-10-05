@@ -40,7 +40,7 @@ Increment the relevant `mod_version` for every further functional or metadata ch
 
 All builds also contain `ChainMode.java`, `Config.java`, `NetworkHandler.java`, and `VeinMinerPlus.java` under their respective source roots.
 
-Config limits are enforced in four places per build. When a limit changes, update all of them or the config definition and the runtime clamp will disagree: `Config.java` (definition), `NetworkHandler.java` (server-side clamp when a config packet is applied), `VeinMinerConfigScreen.java` (GUI input bounds; Forge 1.12.2 keeps them in the `FIELD_MAXES` array), and `CommandEvents.java` (command argument bounds). Range text in `en_us` / `zh_cn` descriptions must be updated too. Forge 1.12.2 has no hardcoded range text in its `.lang` files — it builds the range string from `FIELD_MAXES` at runtime and uses `%s-%s` placeholders in command messages.
+Config limits are enforced in three places per build. When a limit changes, update all of them or the config definition and the runtime clamp will disagree: `Config.java` (definition), `NetworkHandler.java` (server-side clamp when a config packet is applied), and `VeinMinerConfigScreen.java` (GUI input bounds; Forge 1.12.2 keeps them in the `FIELD_MAXES` array). `CommandEvents.java` only opens the config screen via `/veinminerplus gui`. Range text in `en_us` / `zh_cn` descriptions must be updated too. Forge 1.12.2 has no hardcoded range text in its `.lang` files — it builds the range string from `FIELD_MAXES` at runtime.
 
 Loader API difference: NeoForge `ModConfigSpec.IntValue` exposes `getAsInt()`; Forge `ForgeConfigSpec.IntValue` only exposes `get()`. Do not copy one build's accessor into the other.
 
@@ -182,7 +182,7 @@ The next manual test should use only the latest JAR for the target and verify:
 7. FTB Ultimine is disabled or rebound before key-conflict conclusions are drawn.
 8. The config screen accepts `2147483647` in all five numeric fields, and lower input still clamps up to each field's minimum.
 9. Area modes break at the configured `maxNormalBlocksPerTick` rate instead of a fixed 8 blocks per tick.
-10. The values persisted to `config/veinminerplus-common.toml` match what the GUI and the commands reported.
+10. The values persisted to `config/veinminerplus-common.toml` match what the GUI reported.
 
 ## Development Constraints
 

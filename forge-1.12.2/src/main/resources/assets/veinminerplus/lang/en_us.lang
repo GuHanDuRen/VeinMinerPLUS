@@ -31,11 +31,8 @@ message.veinminerplus.whitelist_select_cancelled=Whitelist add cancelled
 message.veinminerplus.config_saved=VeinMinerPlus settings saved
 message.veinminerplus.config_permission=You need permission level 2 to open VeinMinerPlus settings
 message.veinminerplus.blast_radius_reduced=Server TPS is low (%s); blast radius reduced from %s to %s
+message.veinminerplus.blast_radius_reduced_notice=Low TPS (%s): blast radius automatically reduced from %s to %s
 message.veinminerplus.blast_radius_too_large=Server TPS is low (%s); blast radius may be too large (current %s)
-commands.veinminerplus.blast_speed=Blast speed: %s blocks per tick (range %s-%s)
-commands.veinminerplus.blast_distance=Blast search radius: %s blocks (range %s-%s)
-commands.veinminerplus.blast_auto_radius=Automatically reduce blast radius on low TPS: %s
-commands.veinminerplus.hunger_consumption=Consume hunger while chain mining: %s (false = no hunger use)
 screen.veinminerplus.config.title=VeinMinerPlus Server Settings
 screen.veinminerplus.config.normal_limit=Normal max blocks
 screen.veinminerplus.config.normal_speed=Normal / tick max
