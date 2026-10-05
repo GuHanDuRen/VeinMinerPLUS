@@ -63,6 +63,7 @@ public final class VeinMinerPlusClient {
     private static boolean estimatedContainer;
     private static EnumFacing.Axis estimatedFaceAxis;
     private static final int FINAL_PROGRESS_DISPLAY_TICKS = 20;
+    private static final int LOW_TPS_NOTICE_DISPLAY_TICKS = 200;
     private static boolean keyStateSent;
     private static boolean registered;
     private static VeinMinerConfigScreen whitelistSelectionScreen;
@@ -72,6 +73,8 @@ public final class VeinMinerPlusClient {
     private static boolean chainProgressVisible;
     private static int chainProgressHideTicks;
     private static long lastProgressSequence = -1L;
+    private static NetworkHandler.LowTpsRadiusMessage lowTpsRadiusNotice;
+    private static int lowTpsRadiusNoticeTicks;
 
     private VeinMinerPlusClient() {
     }
@@ -82,6 +85,8 @@ public final class VeinMinerPlusClient {
             Minecraft minecraft = Minecraft.getMinecraft();
             if (minecraft.player == null || minecraft.world == null) {
                 clearChainProgress();
+                lowTpsRadiusNotice = null;
+                lowTpsRadiusNoticeTicks = 0;
                 lastProgressSequence = -1;
                 keyStateSent = false;
                 whitelistSelectionScreen = null;
@@ -101,6 +106,9 @@ public final class VeinMinerPlusClient {
                 if (chainProgressHideTicks == 0) {
                     clearChainProgress();
                 }
+            }
+            if (lowTpsRadiusNoticeTicks > 0 && --lowTpsRadiusNoticeTicks == 0) {
+                lowTpsRadiusNotice = null;
             }
             restorePendingWhitelistSelection(minecraft);
             syncKeyState();
@@ -297,6 +305,11 @@ public final class VeinMinerPlusClient {
         return clientMode == ChainMode.XRAY;
     }
 
+    static void updateLowTpsRadiusNotice(double tps, int oldDistance, int reducedDistance) {
+        lowTpsRadiusNotice = new NetworkHandler.LowTpsRadiusMessage(tps, oldDistance, reducedDistance);
+        lowTpsRadiusNoticeTicks = LOW_TPS_NOTICE_DISPLAY_TICKS;
+    }
+
     static void updateChainProgress(long sequence, boolean active, int count) {
         // Netty preserves channel order, but scheduled client tasks can still
         // be interleaved with other work. Never let an older packet overwrite
@@ -353,6 +366,40 @@ public final class VeinMinerPlusClient {
             Gui.drawRect(x - 4, y - 2, x + boxWidth + 4, y + 9, 0x90000000);
             restoreOverlayBlend();
             minecraft.fontRenderer.drawStringWithShadow(text, textX, y, 0xFFFFFF);
+        } finally {
+            endOverlayRender();
+        }
+    }
+
+    static void renderLowTpsRadiusNotice(ScaledResolution resolution) {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.player == null || minecraft.world == null || minecraft.gameSettings.hideGUI
+                || minecraft.currentScreen != null || lowTpsRadiusNotice == null) {
+            return;
+        }
+        String text = net.minecraft.client.resources.I18n.format("message.veinminerplus.blast_radius_reduced_notice",
+                String.format(java.util.Locale.ROOT, "%.1f", lowTpsRadiusNotice.getTps()),
+                lowTpsRadiusNotice.getOldDistance(), lowTpsRadiusNotice.getReducedDistance());
+        int maxWidth = Math.min(520, resolution.getScaledWidth() - 24);
+        List<String> lines = minecraft.fontRenderer.listFormattedStringToWidth(text, maxWidth);
+        int boxWidth = 0;
+        for (String line : lines) {
+            boxWidth = Math.max(boxWidth, minecraft.fontRenderer.getStringWidth(line));
+        }
+        int lineHeight = minecraft.fontRenderer.FONT_HEIGHT + 2;
+        int lastLineY = resolution.getScaledHeight() - 82;
+        int top = lastLineY - (lines.size() - 1) * lineHeight;
+        int left = (resolution.getScaledWidth() - boxWidth) / 2;
+        beginOverlayRender();
+        try {
+            Gui.drawRect(left - 6, top - 3, left + boxWidth + 6,
+                    lastLineY + minecraft.fontRenderer.FONT_HEIGHT + 1, 0xC0101820);
+            restoreOverlayBlend();
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
+                int x = (resolution.getScaledWidth() - minecraft.fontRenderer.getStringWidth(line)) / 2;
+                minecraft.fontRenderer.drawStringWithShadow(line, x, top + i * lineHeight, 0xFFFFC66D);
+            }
         } finally {
             endOverlayRender();
         }

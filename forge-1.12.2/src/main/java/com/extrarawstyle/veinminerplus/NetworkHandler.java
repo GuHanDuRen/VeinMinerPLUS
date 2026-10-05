@@ -34,6 +34,7 @@ public final class NetworkHandler {
         CHANNEL.registerMessage(ConfigSnapshotHandler.class, ConfigSnapshotMessage.class, packetId++, Side.CLIENT);
         CHANNEL.registerMessage(ConfigUpdateHandler.class, ConfigUpdateMessage.class, packetId++, Side.SERVER);
         CHANNEL.registerMessage(ProgressHandler.class, ProgressMessage.class, packetId++, Side.CLIENT);
+        CHANNEL.registerMessage(LowTpsRadiusNoticeHandler.class, LowTpsRadiusMessage.class, packetId++, Side.CLIENT);
     }
 
     public static void sendKeyState(boolean held) {
@@ -53,6 +54,13 @@ public final class NetworkHandler {
     public static void clearProgress(EntityPlayerMP player, int count) {
         if (player != null && CHANNEL != null) {
             CHANNEL.sendTo(new ProgressMessage(false, count, nextProgressSequence()), player);
+        }
+    }
+
+    public static void sendLowTpsRadiusNotice(EntityPlayerMP player, double tps, int oldDistance,
+            int reducedDistance) {
+        if (player != null && CHANNEL != null) {
+            CHANNEL.sendTo(new LowTpsRadiusMessage(tps, oldDistance, reducedDistance), player);
         }
     }
 
@@ -249,6 +257,47 @@ public final class NetworkHandler {
         }
     }
 
+    public static class LowTpsRadiusMessage implements IMessage {
+        private double tps;
+        private int oldDistance;
+        private int reducedDistance;
+
+        public LowTpsRadiusMessage() {
+        }
+
+        public LowTpsRadiusMessage(double tps, int oldDistance, int reducedDistance) {
+            this.tps = tps;
+            this.oldDistance = oldDistance;
+            this.reducedDistance = reducedDistance;
+        }
+
+        public double getTps() {
+            return tps;
+        }
+
+        public int getOldDistance() {
+            return oldDistance;
+        }
+
+        public int getReducedDistance() {
+            return reducedDistance;
+        }
+
+        @Override
+        public void fromBytes(ByteBuf buf) {
+            tps = buf.readDouble();
+            oldDistance = buf.readInt();
+            reducedDistance = buf.readInt();
+        }
+
+        @Override
+        public void toBytes(ByteBuf buf) {
+            buf.writeDouble(tps);
+            buf.writeInt(oldDistance);
+            buf.writeInt(reducedDistance);
+        }
+    }
+
     private static void writeWhitelist(ByteBuf buf, String value) {
         String text = value == null ? "" : value;
         if (text.length() > MAX_WHITELIST_TEXT_LENGTH) {
@@ -393,6 +442,22 @@ public final class NetworkHandler {
                     @Override
                     public void run() {
                         VeinMinerPlusClient.updateChainProgress(message.sequence, message.active, message.count);
+                    }
+                });
+            }
+            return null;
+        }
+    }
+
+    public static class LowTpsRadiusNoticeHandler implements IMessageHandler<LowTpsRadiusMessage, IMessage> {
+        @Override
+        public IMessage onMessage(final LowTpsRadiusMessage message, MessageContext context) {
+            if (context.side == Side.CLIENT) {
+                net.minecraft.client.Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+                    @Override
+                    public void run() {
+                        VeinMinerPlusClient.updateLowTpsRadiusNotice(message.getTps(),
+                                message.getOldDistance(), message.getReducedDistance());
                     }
                 });
             }

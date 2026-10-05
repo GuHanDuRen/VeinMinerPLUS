@@ -1212,8 +1212,7 @@ public final class ChainEvents {
                 }
                 sparseScanOffsets = sparseChunkOffsets(blastDistance);
                 sparseTargets.clear();
-                player.displayClientMessage(Component.translatable("message.veinminerplus.blast_radius_reduced",
-                        String.format("%.1f", tps), oldDistance, blastDistance), true);
+                NetworkHandler.sendBlastRadiusReduced(player, tps, oldDistance, blastDistance);
             } else {
                 player.displayClientMessage(Component.translatable("message.veinminerplus.blast_radius_too_large",
                         String.format("%.1f", tps), blastDistance), true);

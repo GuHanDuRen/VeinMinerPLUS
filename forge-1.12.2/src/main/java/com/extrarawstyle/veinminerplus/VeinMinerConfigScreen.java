@@ -6,6 +6,8 @@ import java.util.List;
 
 import com.google.common.base.Predicate;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
@@ -30,6 +32,13 @@ public class VeinMinerConfigScreen extends GuiScreen {
     private static final int COLUMN_GAP = 8;
     private static final int WHITELIST_LABEL_HEIGHT = 10;
     private static final int WHITELIST_SECTION_GAP = 4;
+    private static final int BACKGROUND_COLOR = 0xED101820;
+    private static final int PANEL_COLOR = 0xF018242D;
+    private static final int BORDER_COLOR = 0xFF2B414C;
+    private static final int HEADER_COLOR = 0xFF1D3039;
+    private static final int ACCENT_COLOR = 0xFF59D8BC;
+    private static final int TEXT_COLOR = 0xFFE5EEF2;
+    private static final int MUTED_TEXT_COLOR = 0xFF96ADB7;
     private static final String[] FIELD_LABELS = {
             "screen.veinminerplus.config.normal_limit", "screen.veinminerplus.config.normal_speed",
             "screen.veinminerplus.config.blast_limit", "screen.veinminerplus.config.blast_speed",
@@ -63,6 +72,11 @@ public class VeinMinerConfigScreen extends GuiScreen {
     private int whitelistVisibleRows;
     private int whitelistX;
     private int whitelistWidth;
+    private int contentTop;
+    private int fieldRowHeight;
+    private int fieldHeight;
+    private int controlsTop;
+    private int controlsBottom;
     private boolean manhattan;
     private boolean autoReduce;
     private boolean consumeHunger;
@@ -84,29 +98,36 @@ public class VeinMinerConfigScreen extends GuiScreen {
         whitelistRemoveButtons.clear();
         int left = contentLeft();
         int columnWidth = columnWidth();
+        boolean compact = height < 300;
+        contentTop = compact ? 30 : CONTENT_TOP;
+        fieldRowHeight = compact ? 26 : FIELD_ROW_HEIGHT;
+        fieldHeight = compact ? 14 : FIELD_HEIGHT;
         for (int i = 0; i < values.length; i++) {
             int x = left + (i % 2) * (columnWidth + COLUMN_GAP);
-            int y = CONTENT_TOP + 11 + (i / 2) * FIELD_ROW_HEIGHT;
+            int y = contentTop + 11 + (i / 2) * fieldRowHeight;
             addField(x, y, columnWidth, values[i]);
         }
 
         int fullWidth = columnWidth * 2 + COLUMN_GAP;
-        int controlsTop = CONTENT_TOP + 4 * FIELD_ROW_HEIGHT;
-        buttonList.add(new GuiButton(100, left, controlsTop, columnWidth, 20,
+        controlsTop = contentTop + 4 * fieldRowHeight + 4;
+        int buttonHeight = compact ? 18 : 20;
+        int buttonStep = buttonHeight + 4;
+        buttonList.add(new StyledButton(100, left, controlsTop, columnWidth, buttonHeight,
                 toggle("screen.veinminerplus.config.manhattan", manhattan)));
-        buttonList.add(new GuiButton(101, left + columnWidth + COLUMN_GAP, controlsTop, columnWidth, 20,
+        buttonList.add(new StyledButton(101, left + columnWidth + COLUMN_GAP, controlsTop, columnWidth, buttonHeight,
                 toggle("screen.veinminerplus.config.auto_radius", autoReduce)));
-        buttonList.add(new GuiButton(102, left, controlsTop + 24, fullWidth, 20,
+        buttonList.add(new StyledButton(102, left, controlsTop + buttonStep,
+                compact ? columnWidth : fullWidth, buttonHeight,
                 toggle("screen.veinminerplus.config.consume_hunger", consumeHunger)));
-        buttonList.add(new GuiButton(103, left, controlsTop + 48, fullWidth, 20, modeText()));
+        buttonList.add(new StyledButton(103, compact ? left + columnWidth + COLUMN_GAP : left,
+                controlsTop + buttonStep * (compact ? 1 : 2), compact ? columnWidth : fullWidth,
+                buttonHeight, modeText()));
+        controlsBottom = controlsTop + buttonStep * (compact ? 1 : 2) + buttonHeight;
 
-        // Leave room for the whitelist heading after the mode button. The
-        // legacy screen draws labels before super.drawScreen(), so a heading
-        // placed inside the button bounds is painted over by that button.
-        int whitelistY = controlsTop + 68 + WHITELIST_SECTION_GAP + WHITELIST_LABEL_HEIGHT;
+        int whitelistY = controlsBottom + WHITELIST_SECTION_GAP + WHITELIST_LABEL_HEIGHT + 4;
         whitelistBaseY = whitelistY;
         whitelistVisibleRows = Math.max(1,
-                Math.min(WHITELIST_MAX_VISIBLE_ROWS, (height - whitelistBaseY - 28) / WHITELIST_ROW_HEIGHT));
+                Math.min(WHITELIST_MAX_VISIBLE_ROWS, (height - whitelistBaseY - 32) / WHITELIST_ROW_HEIGHT));
         whitelistViewportBottom = whitelistBaseY + whitelistVisibleRows * WHITELIST_ROW_HEIGHT;
         whitelistX = left;
         whitelistWidth = Math.max(48,
@@ -114,26 +135,26 @@ public class VeinMinerConfigScreen extends GuiScreen {
         initializeWhitelistRows();
         int whitelistRemoveX = whitelistX + whitelistWidth + WHITELIST_CONTROL_GAP;
         for (int slot = 0; slot < whitelistVisibleRows; slot++) {
-            GuiButton removeButton = new GuiButton(WHITELIST_REMOVE_BUTTON_BASE + slot,
+            GuiButton removeButton = new StyledButton(WHITELIST_REMOVE_BUTTON_BASE + slot,
                     whitelistRemoveX, whitelistBaseY + slot * WHITELIST_ROW_HEIGHT,
-                    WHITELIST_CONTROL_WIDTH, WHITELIST_ROW_HEIGHT, "-");
+                    WHITELIST_CONTROL_WIDTH, FIELD_HEIGHT, "-");
             whitelistRemoveButtons.add(removeButton);
             buttonList.add(removeButton);
         }
         int whitelistAddX = whitelistRemoveX + WHITELIST_CONTROL_WIDTH + WHITELIST_CONTROL_GAP;
-        buttonList.add(new GuiButton(104, whitelistAddX, whitelistY,
-                WHITELIST_CONTROL_WIDTH, WHITELIST_ROW_HEIGHT, "+"));
+        buttonList.add(new StyledButton(104, whitelistAddX, whitelistY,
+                WHITELIST_CONTROL_WIDTH, FIELD_HEIGHT, "+"));
         layoutWhitelistRows();
 
         int footerWidth = Math.min(100, Math.max(64, (width - 20 - 10) / 3));
         int footerY = height - 22;
         int footerTotalWidth = footerWidth * 3 + 10;
         int footerLeft = (width - footerTotalWidth) / 2;
-        buttonList.add(new GuiButton(202, footerLeft, footerY, footerWidth, 20,
+        buttonList.add(new StyledButton(202, footerLeft, footerY, footerWidth, 20,
                 I18n.format("screen.veinminerplus.config.reset_defaults")));
-        buttonList.add(new GuiButton(200, footerLeft + footerWidth + 5, footerY, footerWidth, 20,
+        buttonList.add(new StyledButton(200, footerLeft + footerWidth + 5, footerY, footerWidth, 20,
                 I18n.format("gui.done")));
-        buttonList.add(new GuiButton(201, footerLeft + (footerWidth + 5) * 2, footerY, footerWidth, 20,
+        buttonList.add(new StyledButton(201, footerLeft + (footerWidth + 5) * 2, footerY, footerWidth, 20,
                 I18n.format("gui.cancel")));
     }
 
@@ -159,7 +180,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
         whitelistLineCount = Math.min(WHITELIST_MAX_ROWS, lines.size());
         whitelistRows.clear();
         for (int index = 0; index < WHITELIST_MAX_ROWS; index++) {
-            GuiTextField row = new GuiTextField(20 + index, fontRenderer, whitelistX, whitelistBaseY,
+            GuiTextField row = new StyledTextField(20 + index, fontRenderer, whitelistX, whitelistBaseY,
                     whitelistWidth, FIELD_HEIGHT);
             row.setMaxStringLength(Config.MAX_WHITELIST_ENTRY_LENGTH);
             row.setText(index < whitelistLineCount ? lines.get(index) : "");
@@ -281,7 +302,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
     }
 
     private int columnWidth() {
-        return Math.min(150, Math.max(80, (width - 24 - COLUMN_GAP) / 2));
+        return Math.min(150, Math.max(80, (width - 40 - COLUMN_GAP) / 2));
     }
 
     private int contentLeft() {
@@ -290,7 +311,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
     }
 
     private void addField(int x, int y, int fieldWidth, String value) {
-        GuiTextField field = new GuiTextField(fields.size(), fontRenderer, x, y, fieldWidth, FIELD_HEIGHT);
+        GuiTextField field = new StyledTextField(fields.size(), fontRenderer, x, y, fieldWidth, fieldHeight);
         field.setValidator(DIGITS_ONLY);
         field.setText(value);
         field.setMaxStringLength(6);
@@ -482,30 +503,52 @@ public class VeinMinerConfigScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
-        drawCenteredString(fontRenderer, I18n.format("screen.veinminerplus.config.title"), width / 2, 12, 0xFFFFFF);
+        drawRect(0, 0, width, height, BACKGROUND_COLOR);
         int left = contentLeft();
         int columnWidth = columnWidth();
+        int right = left + columnWidth * 2 + COLUMN_GAP;
+        drawRect(left - 8, 6, right + 8, 25, HEADER_COLOR);
+        drawRect(left - 8, 6, right + 8, 7, ACCENT_COLOR);
+        String title = fontRenderer.trimStringToWidth(I18n.format("screen.veinminerplus.config.title"),
+                right - left);
+        fontRenderer.drawString(title, (width - fontRenderer.getStringWidth(title)) / 2, 12, TEXT_COLOR);
+        drawPanel(left - 8, contentTop - 5, right + 8, controlsTop - 5, PANEL_COLOR, BORDER_COLOR);
+        drawPanel(left - 8, controlsTop - 3, right + 8, controlsBottom + 3, PANEL_COLOR, BORDER_COLOR);
+        drawPanel(left - 8, whitelistBaseY - WHITELIST_LABEL_HEIGHT - 3, right + 8,
+                whitelistViewportBottom, PANEL_COLOR, BORDER_COLOR);
+        drawRect(left - 8, whitelistBaseY - WHITELIST_LABEL_HEIGHT - 3, left - 6,
+                whitelistBaseY - 2, ACCENT_COLOR);
+        drawRect(0, height - 24, width, height, BACKGROUND_COLOR);
+        drawRect(left - 8, height - 25, right + 8, height - 24, BORDER_COLOR);
         for (int i = 0; i < fields.size(); i++) {
             int x = left + (i % 2) * (columnWidth + COLUMN_GAP);
-            int y = CONTENT_TOP + (i / 2) * FIELD_ROW_HEIGHT;
-            String range = FIELD_MINS[i] + "-" + FIELD_MAXES[i];
-            int rangeWidth = fontRenderer.getStringWidth(range);
-            int labelWidth = Math.max(0, columnWidth - rangeWidth - 4);
-            String label = fontRenderer.trimStringToWidth(I18n.format(FIELD_LABELS[i]), labelWidth);
-            fontRenderer.drawString(label, x, y, 0xFFFFFF);
-            fontRenderer.drawString(range, x + columnWidth - rangeWidth, y, 0xA0A0A0);
+            int y = contentTop + (i / 2) * fieldRowHeight;
+            String label = fontRenderer.trimStringToWidth(I18n.format(FIELD_LABELS[i]), columnWidth);
+            fontRenderer.drawString(label, x, y, MUTED_TEXT_COLOR);
             fields.get(i).drawTextBox();
         }
         if (!whitelistRows.isEmpty()) {
             int whitelistY = whitelistBaseY;
-            String label = I18n.format("screen.veinminerplus.config.whitelist");
-            fontRenderer.drawString(label, left, whitelistY - WHITELIST_LABEL_HEIGHT, 0xFFFFFF);
+            String label = fontRenderer.trimStringToWidth(I18n.format("screen.veinminerplus.config.whitelist"),
+                    right - left);
+            fontRenderer.drawString(label, left, whitelistY - WHITELIST_LABEL_HEIGHT, TEXT_COLOR);
             for (GuiTextField row : whitelistRows) {
                 row.drawTextBox();
             }
             drawWhitelistScrollbar();
         }
         super.drawScreen(mouseX, mouseY, partialTicks);
+        for (int i = 0; i < fields.size(); i++) {
+            GuiTextField field = fields.get(i);
+            if (mouseX >= field.x && mouseX < field.x + field.width
+                    && mouseY >= field.y - 11 && mouseY < field.y + field.height) {
+                List<String> tooltip = new ArrayList<String>();
+                tooltip.add(I18n.format(FIELD_LABELS[i]));
+                tooltip.add(FIELD_MINS[i] + " - " + FIELD_MAXES[i]);
+                drawHoveringText(tooltip, mouseX, mouseY);
+                break;
+            }
+        }
     }
 
     private void drawWhitelistScrollbar() {
@@ -519,8 +562,74 @@ public class VeinMinerConfigScreen extends GuiScreen {
         int thumbHeight = Math.max(10, trackHeight * whitelistVisibleRows / whitelistLineCount);
         int travel = Math.max(0, trackHeight - thumbHeight);
         int thumbY = trackTop + (int) Math.round(travel * (double) whitelistScrollRow / max);
-        drawRect(trackX, trackTop, trackX + 2, whitelistViewportBottom, 0x50505050);
-        drawRect(trackX, thumbY, trackX + 2, thumbY + thumbHeight, 0xC0D0D0D0);
+        drawRect(trackX, trackTop, trackX + 2, whitelistViewportBottom, BORDER_COLOR);
+        drawRect(trackX, thumbY, trackX + 2, thumbY + thumbHeight, ACCENT_COLOR);
+    }
+
+    private static void drawPanel(int left, int top, int right, int bottom, int fill, int border) {
+        drawRect(left, top, right, bottom, fill);
+        drawRect(left, top, right, top + 1, border);
+        drawRect(left, bottom - 1, right, bottom, border);
+        drawRect(left, top, left + 1, bottom, border);
+        drawRect(right - 1, top, right, bottom, border);
+    }
+
+    private final class StyledButton extends GuiButton {
+        private StyledButton(int id, int x, int y, int width, int height, String text) {
+            super(id, x, y, width, height, text);
+        }
+
+        @Override
+        public void drawButton(Minecraft minecraft, int mouseX, int mouseY, float partialTicks) {
+            if (!visible) {
+                return;
+            }
+            hovered = mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
+            boolean primary = id == 200;
+            int fill = primary ? ACCENT_COLOR : HEADER_COLOR;
+            if (hovered && enabled) {
+                fill = primary ? 0xFF80E5CE : 0xFF29434B;
+            }
+            int border = hovered && enabled || primary ? ACCENT_COLOR : BORDER_COLOR;
+            drawPanel(x, y, x + width, y + height, fill, border);
+            boolean toggleButton = id == 100 || id == 101 || id == 102;
+            boolean on = id == 100 ? manhattan : id == 101 ? autoReduce : consumeHunger;
+            if (toggleButton) {
+                drawRect(x + 3, y + 5, x + 5, y + height - 5, on ? ACCENT_COLOR : MUTED_TEXT_COLOR);
+            }
+            int textColor = enabled ? primary ? 0xFF102820 : TEXT_COLOR : MUTED_TEXT_COLOR;
+            String text = minecraft.fontRenderer.trimStringToWidth(displayString, width - 12);
+            minecraft.fontRenderer.drawString(text, x + (width - minecraft.fontRenderer.getStringWidth(text)) / 2,
+                    y + (height - 8) / 2, textColor);
+            mouseDragged(minecraft, mouseX, mouseY);
+        }
+    }
+
+    private static final class StyledTextField extends GuiTextField {
+        private StyledTextField(int id, FontRenderer font, int x, int y, int width, int height) {
+            super(id, font, x, y, width, height);
+            setTextColor(TEXT_COLOR);
+            setDisabledTextColour(MUTED_TEXT_COLOR);
+        }
+
+        @Override
+        public void drawTextBox() {
+            if (!getVisible()) {
+                return;
+            }
+            drawPanel(x, y, x + width, y + height, 0xFF101820,
+                    isFocused() ? ACCENT_COLOR : BORDER_COLOR);
+            int insetY = (height - 8) / 2;
+            setEnableBackgroundDrawing(false);
+            x += 4;
+            y += insetY;
+            width -= 8;
+            super.drawTextBox();
+            width += 8;
+            y -= insetY;
+            x -= 4;
+            setEnableBackgroundDrawing(true);
+        }
     }
 
     @Override

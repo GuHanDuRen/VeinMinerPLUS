@@ -14,7 +14,7 @@ import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.simple.SimpleChannel;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "5";
+    private static final String PROTOCOL_VERSION = "6";
     static final int MAX_WHITELIST_TEXT_LENGTH = 4096;
     private static int packetId;
     private static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
@@ -49,6 +49,14 @@ public final class NetworkHandler {
         CHANNEL.registerMessage(packetId++, ConfigUpdatePayload.class,
                 NetworkHandler::writeConfigUpdate, NetworkHandler::readConfigUpdate,
                 NetworkHandler::handleConfigUpdate, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++, BlastRadiusReducedPayload.class,
+                (payload, buffer) -> {
+                    buffer.writeDouble(payload.tps());
+                    buffer.writeVarInt(payload.oldDistance());
+                    buffer.writeVarInt(payload.newDistance());
+                },
+                buffer -> new BlastRadiusReducedPayload(buffer.readDouble(), buffer.readVarInt(), buffer.readVarInt()),
+                NetworkHandler::handleBlastRadiusReduced, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     static void sendKeyState(boolean held) {
@@ -65,6 +73,11 @@ public final class NetworkHandler {
 
     static void sendConfigUpdate(ConfigUpdatePayload payload) {
         CHANNEL.sendToServer(payload);
+    }
+
+    static void sendBlastRadiusReduced(ServerPlayer player, double tps, int oldDistance, int newDistance) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                new BlastRadiusReducedPayload(tps, oldDistance, newDistance));
     }
 
     private static void handleKeyState(KeyStatePayload payload, Supplier<NetworkEvent.Context> supplier) {
@@ -93,6 +106,14 @@ public final class NetworkHandler {
             Supplier<NetworkEvent.Context> supplier) {
         NetworkEvent.Context context = supplier.get();
         context.enqueueWork(() -> VeinMinerPlusClient.openConfigScreen(payload));
+        context.setPacketHandled(true);
+    }
+
+    private static void handleBlastRadiusReduced(BlastRadiusReducedPayload payload,
+            Supplier<NetworkEvent.Context> supplier) {
+        NetworkEvent.Context context = supplier.get();
+        context.enqueueWork(() -> VeinMinerPlusClient.showBlastRadiusReduced(
+                payload.tps(), payload.oldDistance(), payload.newDistance()));
         context.setPacketHandled(true);
     }
 
@@ -148,6 +169,9 @@ public final class NetworkHandler {
     }
 
     private record ConfigRequestPayload() {
+    }
+
+    private record BlastRadiusReducedPayload(double tps, int oldDistance, int newDistance) {
     }
 
     public record ConfigSnapshotPayload(int maxNormalBlocks, int maxNormalBlocksPerTick,

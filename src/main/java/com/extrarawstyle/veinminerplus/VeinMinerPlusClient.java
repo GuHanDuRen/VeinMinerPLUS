@@ -2,6 +2,7 @@ package com.extrarawstyle.veinminerplus;
 
 import java.util.ArrayDeque;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 
 import org.lwjgl.glfw.GLFW;
@@ -78,6 +79,8 @@ public final class VeinMinerPlusClient {
     private static boolean keyStateSent;
     private static VeinMinerConfigScreen whitelistSelectionScreen;
     private static VeinMinerConfigScreen pendingWhitelistSelectionReturn;
+    private static Component blastRadiusReductionNotice;
+    private static int blastRadiusReductionNoticeTicks;
 
     public VeinMinerPlusClient(IEventBus modEventBus, ModContainer container) {
         modEventBus.addListener(VeinMinerPlusClient::registerKeyMappings);
@@ -208,6 +211,47 @@ public final class VeinMinerPlusClient {
         Minecraft.getInstance().setScreen(new VeinMinerConfigScreen(config));
     }
 
+    static void showBlastRadiusReduced(double tps, int oldDistance, int newDistance) {
+        blastRadiusReductionNotice = Component.translatable("message.veinminerplus.blast_radius_reduced_notice",
+                String.format(Locale.ROOT, "%.1f", tps), oldDistance, newDistance);
+        blastRadiusReductionNoticeTicks = 200;
+    }
+
+    static void renderBlastRadiusReductionNotice(GuiGraphics graphics) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (blastRadiusReductionNotice == null || minecraft.options.hideGui
+                || minecraft.player == null || minecraft.level == null || minecraft.screen != null) {
+            return;
+        }
+
+        int width = minecraft.getWindow().getGuiScaledWidth();
+        int bottomY = minecraft.getWindow().getGuiScaledHeight() - 82;
+        var lines = minecraft.font.split(blastRadiusReductionNotice, Math.max(1, Math.min(520, width - 24)));
+        int y = bottomY - (lines.size() - 1) * minecraft.font.lineHeight;
+        int textWidth = 0;
+        for (var line : lines) {
+            textWidth = Math.max(textWidth, minecraft.font.width(line));
+        }
+        int left = (width - textWidth) / 2;
+        graphics.fill(left - 4, y - 2, left + textWidth + 4, bottomY + minecraft.font.lineHeight, 0xC0101820);
+        for (var line : lines) {
+            int lineWidth = minecraft.font.width(line);
+            int x = (width - lineWidth) / 2;
+            graphics.drawString(minecraft.font, line, x, y, 0xFFFFC66D, false);
+            y += minecraft.font.lineHeight;
+        }
+    }
+
+    private static void tickBlastRadiusReductionNotice() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.level == null || blastRadiusReductionNoticeTicks <= 1) {
+            blastRadiusReductionNotice = null;
+            blastRadiusReductionNoticeTicks = 0;
+        } else {
+            blastRadiusReductionNoticeTicks--;
+        }
+    }
+
     static void beginWhitelistSelection(VeinMinerConfigScreen screen) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null || minecraft.level == null || minecraft.screen != screen) {
@@ -305,6 +349,7 @@ public final class VeinMinerPlusClient {
 
     @SubscribeEvent
     public static void onRenderGui(RenderGuiEvent.Post event) {
+        renderBlastRadiusReductionNotice(event.getGuiGraphics());
         Minecraft minecraft = Minecraft.getInstance();
         if (!isChainKeyActive(minecraft)) {
             return;
@@ -320,6 +365,7 @@ public final class VeinMinerPlusClient {
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
+        tickBlastRadiusReductionNotice();
         restorePendingWhitelistSelection();
         updateEstimatedChainCount(Minecraft.getInstance());
         XrayClientState.tick(Minecraft.getInstance());

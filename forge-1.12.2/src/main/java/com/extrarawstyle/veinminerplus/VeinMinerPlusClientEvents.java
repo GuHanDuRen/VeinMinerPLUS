@@ -32,6 +32,7 @@ public final class VeinMinerPlusClientEvents {
         }
         if (event.getType() == RenderGameOverlayEvent.ElementType.ALL) {
             VeinMinerPlusClient.renderChainProgress(event.getResolution());
+            VeinMinerPlusClient.renderLowTpsRadiusNotice(event.getResolution());
             VeinMinerPlusClient.renderModeMenu();
         }
     }

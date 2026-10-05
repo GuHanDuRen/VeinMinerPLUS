@@ -32,11 +32,8 @@ message.veinminerplus.whitelist_select_cancelled=已取消添加白名单
 message.veinminerplus.config_saved=VeinMinerPlus 配置已保存
 message.veinminerplus.config_permission=需要权限等级 2 才能打开 VeinMinerPlus 配置
 message.veinminerplus.blast_radius_reduced=服务器 TPS 过低（%s），爆破半径已从 %s 降至 %s
+message.veinminerplus.blast_radius_reduced_notice=TPS 过低（%s），本次爆破范围已自动降低：%s → %s
 message.veinminerplus.blast_radius_too_large=服务器 TPS 过低（%s），爆破半径可能过大（当前 %s）
-commands.veinminerplus.blast_speed=爆破速度：每 tick %s 个方块（范围 %s-%s）
-commands.veinminerplus.blast_distance=爆破搜索半径：%s 格（范围 %s-%s）
-commands.veinminerplus.blast_auto_radius=低 TPS 时自动降低爆破半径：%s
-commands.veinminerplus.hunger_consumption=连锁挖掘消耗饱食度：%s（false = 不消耗）
 screen.veinminerplus.config.title=VeinMinerPlus 服务端配置
 screen.veinminerplus.config.normal_limit=普通最大方块数
 screen.veinminerplus.config.normal_speed=普通每 Tick 最大数

@@ -76,12 +76,14 @@ public final class VeinMinerPlusClientEvents {
 
     @SubscribeEvent
     public static void onRenderGui(RenderGuiEvent.Post event) {
+        VeinMinerPlusClient.renderBlastRadiusReductionNotice(event.getGuiGraphics());
         VeinMinerPlusClient.renderModeMenu(event.getGuiGraphics());
     }
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
+            VeinMinerPlusClient.tickBlastRadiusReductionNotice();
             VeinMinerPlusClient.restorePendingWhitelistSelection();
             XrayClientState.tick(Minecraft.getInstance());
             VeinMinerPlusClient.syncKeyState();

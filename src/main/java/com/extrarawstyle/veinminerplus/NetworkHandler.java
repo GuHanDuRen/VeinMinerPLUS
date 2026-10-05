@@ -10,7 +10,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "5";
+    private static final String PROTOCOL_VERSION = "6";
     static final int MAX_WHITELIST_TEXT_LENGTH = 4096;
 
     private NetworkHandler() {
@@ -35,6 +35,9 @@ public final class NetworkHandler {
                 }));
         registrar.playToClient(ConfigSnapshotPayload.TYPE, ConfigSnapshotPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> VeinMinerPlusClient.openConfigScreen(payload)));
+        registrar.playToClient(BlastRadiusReducedPayload.TYPE, BlastRadiusReducedPayload.STREAM_CODEC,
+                (payload, context) -> context.enqueueWork(() -> VeinMinerPlusClient.showBlastRadiusReduced(
+                        payload.tps(), payload.oldDistance(), payload.newDistance())));
         registrar.playToServer(ConfigUpdatePayload.TYPE, ConfigUpdatePayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> {
                     if (context.player() instanceof ServerPlayer player && player.hasPermissions(2)) {
@@ -57,6 +60,10 @@ public final class NetworkHandler {
 
     static void sendConfigUpdate(ConfigUpdatePayload payload) {
         PacketDistributor.sendToServer(payload);
+    }
+
+    static void sendBlastRadiusReduced(ServerPlayer player, double tps, int oldDistance, int newDistance) {
+        PacketDistributor.sendToPlayer(player, new BlastRadiusReducedPayload(tps, oldDistance, newDistance));
     }
 
     private static void applyConfig(ServerPlayer player, ConfigUpdatePayload payload) {
@@ -138,6 +145,23 @@ public final class NetworkHandler {
                     Config.BLAST_AUTO_REDUCE_RADIUS.getAsBoolean(), Config.CONSUME_HUNGER.getAsBoolean(),
                     ChainEvents.getMode(player).id(), Config.whitelistText());
         }
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record BlastRadiusReducedPayload(double tps, int oldDistance, int newDistance) implements CustomPacketPayload {
+        public static final Type<BlastRadiusReducedPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "blast_radius_reduced"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, BlastRadiusReducedPayload> STREAM_CODEC = StreamCodec.of(
+                (buffer, payload) -> {
+                    buffer.writeDouble(payload.tps());
+                    buffer.writeVarInt(payload.oldDistance());
+                    buffer.writeVarInt(payload.newDistance());
+                },
+                buffer -> new BlastRadiusReducedPayload(buffer.readDouble(), buffer.readVarInt(), buffer.readVarInt()));
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
