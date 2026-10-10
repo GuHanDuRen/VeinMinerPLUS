@@ -67,6 +67,25 @@ public final class ChainEvents {
     private static final String[] ORE_HOST_STONES = { "deepslate", "slate", "stone", "endstone", "netherrack",
             "nether", "end", "other", "blackstone", "basalt", "tuff", "granite", "diorite", "andesite", "marble",
             "limestone" };
+    // Pre-computed suffixes and prefixes for ore family key computation
+    private static final String[] ORE_HOST_SUFFIXES = createOreSuffixes();
+    private static final String[] ORE_HOST_PREFIXES = createOrePrefixes();
+
+    private static String[] createOreSuffixes() {
+        String[] suffixes = new String[ORE_HOST_STONES.length];
+        for (int i = 0; i < ORE_HOST_STONES.length; i++) {
+            suffixes[i] = "_" + ORE_HOST_STONES[i];
+        }
+        return suffixes;
+    }
+
+    private static String[] createOrePrefixes() {
+        String[] prefixes = new String[ORE_HOST_STONES.length];
+        for (int i = 0; i < ORE_HOST_STONES.length; i++) {
+            prefixes[i] = ORE_HOST_STONES[i] + "_";
+        }
+        return prefixes;
+    }
 
     private static final TagKey<Block> ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.withDefaultNamespace("ores"));
@@ -77,6 +96,8 @@ public final class ChainEvents {
     private static final Map<Integer, List<ChunkOffset>> SPARSE_CHUNK_OFFSETS = new ConcurrentHashMap<>();
     // Pure memoisation of oreFamilyKey; bounded by the size of the block registry.
     private static final Map<Block, String> ORE_FAMILY_KEYS = new HashMap<>();
+    // Cache for isOre checks; bounded by the size of the block registry.
+    private static final Map<Block, Boolean> ORE_CACHE = new HashMap<>();
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
@@ -88,6 +109,9 @@ public final class ChainEvents {
     private static final Map<UUID, BreakFace> LAST_BREAK_FACES = new HashMap<>();
     private static final Map<UUID, HungerStart> HUNGER_STARTS = new HashMap<>();
     private static final Map<UUID, HungerProtection> HUNGER_PROTECTIONS = new HashMap<>();
+    // Cache the compiled whitelist matcher to avoid recreating it every search
+    private static volatile WhitelistMatcher cachedWhitelistMatcher = null;
+    private static volatile int cachedWhitelistVersion = -1;
 
     @SubscribeEvent
     public void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
@@ -392,34 +416,23 @@ public final class ChainEvents {
     }
 
     private static Set<String> configuredWhitelist() {
-        return Collections.unmodifiableSet(new LinkedHashSet<>(
-                Config.effectiveWhitelist(Config.BLOCK_WHITELIST.get())));
+        return getWhitelistMatcher().whitelist;
+    }
+
+    private static WhitelistMatcher getWhitelistMatcher() {
+        int currentVersion = Config.BLOCK_WHITELIST.get().hashCode();
+        WhitelistMatcher current = cachedWhitelistMatcher;
+        if (current != null && cachedWhitelistVersion == currentVersion) {
+            return current;
+        }
+        current = new WhitelistMatcher(Config.effectiveWhitelist(Config.BLOCK_WHITELIST.get()));
+        cachedWhitelistMatcher = current;
+        cachedWhitelistVersion = currentVersion;
+        return current;
     }
 
     private static boolean isWhitelisted(BlockState state, Set<String> whitelist) {
-        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        if (whitelist == null || whitelist.isEmpty()) {
-            return false;
-        }
-        if (id == null) {
-            return false;
-        }
-        for (String rule : whitelist) {
-            if (rule.startsWith("#")) {
-                ResourceLocation tagId = ResourceLocation.tryParse(rule.substring(1));
-                if (tagId != null && state.is(TagKey.create(Registries.BLOCK, tagId))) {
-                    return true;
-                }
-            } else if (rule.indexOf('*') >= 0) {
-                String candidate = rule.indexOf(':') >= 0 ? id.toString() : id.getPath();
-                if (wildcardMatches(rule, candidate)) {
-                    return true;
-                }
-            } else if (rule.equals(id.toString())) {
-                return true;
-            }
-        }
-        return false;
+        return getWhitelistMatcher().matches(state);
     }
 
     private static boolean wildcardMatches(String pattern, String value) {
@@ -457,13 +470,31 @@ public final class ChainEvents {
     }
 
     private static boolean isContainer(ServerLevel level, BlockPos pos, BlockState state) {
-        BlockEntity blockEntity = level.getBlockEntity(pos);
-        return blockEntity instanceof Container
-                || state.getMenuProvider(level, pos) != null
-                || level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null) != null;
+        // Check BlockEntity first (usually fastest)
+        if (level.getBlockEntity(pos) instanceof Container) {
+            return true;
+        }
+        // Check capabilities (common for modded containers)
+        if (level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null) != null) {
+            return true;
+        }
+        // Check menu provider last (usually slowest)
+        return state.getMenuProvider(level, pos) != null;
     }
 
     private static boolean isOre(BlockState state) {
+        Block block = state.getBlock();
+        Boolean cached = ORE_CACHE.get(block);
+        if (cached != null) {
+            return cached;
+        }
+
+        boolean result = isOreUncached(state);
+        ORE_CACHE.put(block, result);
+        return result;
+    }
+
+    private static boolean isOreUncached(BlockState state) {
         if (state.is(ORE_BLOCKS) || state.is(COMMON_ORE_BLOCKS)) {
             return true;
         }
@@ -512,13 +543,14 @@ public final class ChainEvents {
         }
 
         String base = path.substring(0, path.length() - ORE_SUFFIX.length());
-        for (String host : ORE_HOST_STONES) {
-            String suffix = "_" + host;
+        // Check pre-computed suffixes and prefixes
+        for (int i = 0; i < ORE_HOST_SUFFIXES.length; i++) {
+            String suffix = ORE_HOST_SUFFIXES[i];
             if (base.length() > suffix.length() && base.endsWith(suffix)) {
                 base = base.substring(0, base.length() - suffix.length());
                 break;
             }
-            String prefix = host + "_";
+            String prefix = ORE_HOST_PREFIXES[i];
             if (base.length() > prefix.length() && base.startsWith(prefix)) {
                 base = base.substring(prefix.length());
                 break;
@@ -528,8 +560,7 @@ public final class ChainEvents {
     }
 
     private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,
-            ChainMode mode, Set<String> whitelist) {
-        BlockState state = level.getBlockState(pos);
+            ChainMode mode, Set<String> whitelist, BlockState state) {
         if (!isEligible(level, player, pos, state, targetBlock, mode, whitelist)) {
             return false;
         }
@@ -544,6 +575,12 @@ public final class ChainEvents {
             showHungerProtectionEffect(player);
         }
         return broken;
+    }
+
+    private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,
+            ChainMode mode, Set<String> whitelist) {
+        BlockState state = level.getBlockState(pos);
+        return breakOne(level, player, pos, targetBlock, mode, whitelist, state);
     }
 
     private static void showHungerProtectionEffect(ServerPlayer player) {
@@ -990,9 +1027,12 @@ public final class ChainEvents {
                     : mode == ChainMode.NORMAL || mode == ChainMode.USE_BLOCK
                             ? Config.MAX_NORMAL_BLOCKS_PER_TICK.getAsInt()
                     : BLOCK_BREAKS_PER_TICK;
+            UUID playerId = player.getUUID();
+            boolean heldKey = HELD_KEYS.contains(playerId);
+
             while (checks < SEARCH_CHECKS_PER_TICK && breaks < breakLimit
                     && !frontier.isEmpty() && brokenCount < totalLimit
-                    && HELD_KEYS.contains(player.getUUID()) && isToolSlotUnchanged()) {
+                    && heldKey && isToolSlotUnchanged()) {
                 SearchNode node = frontier.removeFirst();
                 int centerChecks = 0;
                 while (centerChecks < SEARCH_CHECKS_PER_CENTER
@@ -1013,7 +1053,7 @@ public final class ChainEvents {
                         sawSameTarget = true;
                     }
                     if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
-                            && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
+                            && breakOne(level, player, candidate, targetBlock, mode, whitelist, state)) {
                         brokenCount++;
                         breaks++;
                         frontier.addLast(new SearchNode(candidate, 0));
@@ -1028,7 +1068,7 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
 
-            if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID()) || frontier.isEmpty()
+            if (!isToolSlotUnchanged() || !heldKey || frontier.isEmpty()
                     || brokenCount >= totalLimit) {
                 finish();
             }
@@ -1041,8 +1081,11 @@ public final class ChainEvents {
             // Area modes share the configurable normal per-tick budget instead of a
             // fixed low constant, so they are no longer throttled to 8 blocks per tick.
             int breakLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.getAsInt();
+            UUID playerId = player.getUUID();
+            boolean heldKey = HELD_KEYS.contains(playerId);
+
             while (breaks < breakLimit && areaDepth <= areaDepthLimit
-                    && HELD_KEYS.contains(player.getUUID()) && isToolSlotUnchanged()) {
+                    && heldKey && isToolSlotUnchanged()) {
                 if (areaIndex >= planeSize) {
                     areaDepth++;
                     areaIndex = 0;
@@ -1061,7 +1104,7 @@ public final class ChainEvents {
 
                 BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
                 if (isEligible(level, player, candidate, state, targetBlock, mode, whitelist)
-                        && breakOne(level, player, candidate, targetBlock, mode, whitelist)) {
+                        && breakOne(level, player, candidate, targetBlock, mode, whitelist, state)) {
                     brokenCount++;
                     breaks++;
                 }
@@ -1071,7 +1114,7 @@ public final class ChainEvents {
                 showProgress(player, brokenCount);
             }
 
-            if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID()) || areaDepth > areaDepthLimit) {
+            if (!isToolSlotUnchanged() || !heldKey || areaDepth > areaDepthLimit) {
                 finish();
             }
         }
@@ -1080,7 +1123,10 @@ public final class ChainEvents {
             int breaks = 0;
             int breakLimit = Config.MAX_BLAST_BLOCKS_PER_TICK.getAsInt();
             int scanBudget = Config.BLAST_CHUNK_SCANS_PER_TICK.getAsInt();
-            while (breaks < breakLimit && brokenCount < totalLimit && HELD_KEYS.contains(player.getUUID())
+            UUID playerId = player.getUUID();
+            boolean heldKey = HELD_KEYS.contains(playerId);
+
+            while (breaks < breakLimit && brokenCount < totalLimit && heldKey
                     && isToolSlotUnchanged()) {
                 scanBudget = fillSparseTargets(scanBudget);
                 if (sparseTargets.isEmpty()) {
@@ -1094,7 +1140,7 @@ public final class ChainEvents {
                         blockId(targetBlock), candidate, blockId(state.getBlock()), rejection == null,
                         rejection == null ? "-" : rejection);
                 if (rejection == null) {
-                    boolean broken = breakOne(level, player, candidate, targetBlock, mode, whitelist);
+                    boolean broken = breakOne(level, player, candidate, targetBlock, mode, whitelist, state);
                     debug("candidate break mode={} target={} pos={} broken={}", mode,
                             blockId(targetBlock), candidate, broken);
                     if (broken) {
@@ -1108,7 +1154,7 @@ public final class ChainEvents {
             if (breaks > 0) {
                 showProgress(player, brokenCount);
             }
-            if (!isToolSlotUnchanged() || !HELD_KEYS.contains(player.getUUID())
+            if (!isToolSlotUnchanged() || !heldKey
                     || sparseSearchExhausted()
                     || brokenCount >= totalLimit) {
                 finish();
@@ -1367,6 +1413,87 @@ public final class ChainEvents {
 
         private boolean finishPending() {
             return finalRestorePending;
+        }
+    }
+
+    /**
+     * Pre-compiled whitelist matcher for efficient block filtering.
+     * Separates tags, exact matches, and wildcards to minimize repeated work.
+     */
+    private static final class WhitelistMatcher {
+        private final Set<String> whitelist;
+        private final List<TagKey<Block>> tagRules;
+        private final List<String> exactRules;
+        private final List<String> wildcardRules;
+        private final Map<Block, Boolean> matchCache = new HashMap<>();
+
+        WhitelistMatcher(Iterable<?> rules) {
+            this.whitelist = Collections.unmodifiableSet(new LinkedHashSet<>(
+                    Config.effectiveWhitelist(rules)));
+            this.tagRules = new ArrayList<>();
+            this.exactRules = new ArrayList<>();
+            this.wildcardRules = new ArrayList<>();
+
+            for (String rule : whitelist) {
+                if (rule.startsWith("#")) {
+                    ResourceLocation tagId = ResourceLocation.tryParse(rule.substring(1));
+                    if (tagId != null) {
+                        tagRules.add(TagKey.create(Registries.BLOCK, tagId));
+                    }
+                } else if (rule.indexOf('*') >= 0) {
+                    wildcardRules.add(rule);
+                } else {
+                    exactRules.add(rule);
+                }
+            }
+        }
+
+        boolean matches(BlockState state) {
+            if (whitelist.isEmpty()) {
+                return false;
+            }
+
+            // Check cache first
+            Block block = state.getBlock();
+            Boolean cached = matchCache.get(block);
+            if (cached != null) {
+                return cached;
+            }
+
+            boolean result = matchesUncached(state, block);
+            matchCache.put(block, result);
+            return result;
+        }
+
+        private boolean matchesUncached(BlockState state, Block block) {
+            ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
+            if (id == null) {
+                return false;
+            }
+
+            // Check tag rules
+            for (TagKey<Block> tag : tagRules) {
+                if (state.is(tag)) {
+                    return true;
+                }
+            }
+
+            // Check exact matches
+            String fullId = id.toString();
+            if (exactRules.contains(fullId)) {
+                return true;
+            }
+
+            // Check wildcard rules
+            String pathId = id.getPath();
+            for (String wildcard : wildcardRules) {
+                String candidate = wildcard.indexOf(':') >= 0 ? fullId : pathId;
+                if (wildcardMatches(wildcard, candidate)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
