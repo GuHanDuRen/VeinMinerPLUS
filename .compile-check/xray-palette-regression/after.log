@@ -1,0 +1,36 @@
+PASS: missing config gives nine empty slots with their own preset colors
+PASS: all nine initial colors are different
+PASS: reading absent config does not write it
+PASS: legacy all-red slots migrate to nine distinct defaults
+PASS: legacy migration does not move selected items or fill empty slots
+PASS: migrated slot colors immediately rebuild the exact render mappings
+PASS: current orange-first and eight-red config becomes nine distinct colors
+PASS: legacy non-red custom colors survive while default red is migrated
+PASS: saved slots mark the default-color version for future loads
+PASS: an explicitly chosen red color survives save and reload without migrating
+PASS: repeated save and reload keep all colors and slot positions stable
+PASS: sparse selection retains all nine slot positions
+PASS: empty slots retain their custom colors
+PASS: selected host variants remain two exact scan targets
+PASS: explicit variants in the same family retain distinct exact colors
+PASS: unselected host variant is excluded and inherits no slot color
+PASS: saving invalidates the scan once
+PASS: saved stacks have count one without modifying inventory stacks
+PASS: input stacks and returned stacks/list cannot mutate saved selection
+PASS: real Gson writes nine slots with item identifiers and empty-slot colors
+PASS: JSON reload restores exact slot positions, items and colors
+PASS: JSON reload rebuilds only exact color mappings
+PASS: tenth slot is excluded from saved selection and exact scan targets
+PASS: JSON never writes more than nine slots
+PASS: null, empty, non-ore and non-block stacks are rejected
+PASS: invalid inputs become colored empty slots without shifting later items
+PASS: colors are normalized to 24-bit RGB
+PASS: short selections are padded with each empty slot's own preset color
+PASS: replacing selection removes previous exact targets
+PASS: duplicate exact blocks use their first slot color without selecting other variants
+PASS: empty selection initializes all nine preset colors and clears exact targets
+PASS: cleared selection remains cleared after JSON reload
+PASS: removed items retain their color and missing colors and slots use their own presets
+PASS: valid persistence operations emit no warnings
+Checked 34 color-selection assertions using config D:\VeinMinerPLUS\.compile-check\xray-color-selection-regression\config-46718721979280339
+PASS: 34 production color-selection assertions

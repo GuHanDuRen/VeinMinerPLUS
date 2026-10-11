@@ -29,16 +29,20 @@ public class VeinMinerConfigScreen extends GuiScreen {
     private static final int CONTENT_TOP = 34;
     private static final int FIELD_ROW_HEIGHT = 30;
     private static final int FIELD_HEIGHT = 18;
-    private static final int COLUMN_GAP = 8;
+    private static final int COLUMN_GAP = 12;
     private static final int WHITELIST_LABEL_HEIGHT = 10;
     private static final int WHITELIST_SECTION_GAP = 4;
+    private static final int SECTION_SPACING = 14;
+    private static final int SECTION_HEADER_HEIGHT = 18;
     private static final int BACKGROUND_COLOR = 0xED101820;
     private static final int PANEL_COLOR = 0xF018242D;
+    private static final int SECTION_PANEL_COLOR = 0xF0141C26;
     private static final int BORDER_COLOR = 0xFF2B414C;
     private static final int HEADER_COLOR = 0xFF1D3039;
     private static final int ACCENT_COLOR = 0xFF59D8BC;
     private static final int TEXT_COLOR = 0xFFE5EEF2;
     private static final int MUTED_TEXT_COLOR = 0xFF96ADB7;
+    private static final int SECTION_TITLE_COLOR = 0xFF59D8BC;
     private static final String[] FIELD_LABELS = {
             "screen.veinminerplus.config.normal_limit", "screen.veinminerplus.config.normal_speed",
             "screen.veinminerplus.config.blast_limit", "screen.veinminerplus.config.blast_speed",
@@ -98,36 +102,58 @@ public class VeinMinerConfigScreen extends GuiScreen {
         whitelistRemoveButtons.clear();
         int left = contentLeft();
         int columnWidth = columnWidth();
-        boolean compact = height < 300;
-        contentTop = compact ? 30 : CONTENT_TOP;
-        fieldRowHeight = compact ? 26 : FIELD_ROW_HEIGHT;
-        fieldHeight = compact ? 14 : FIELD_HEIGHT;
-        for (int i = 0; i < values.length; i++) {
-            int x = left + (i % 2) * (columnWidth + COLUMN_GAP);
-            int y = contentTop + 11 + (i / 2) * fieldRowHeight;
-            addField(x, y, columnWidth, values[i]);
-        }
+        boolean compact = height < 350;
+        contentTop = compact ? 28 : CONTENT_TOP;
+        fieldRowHeight = compact ? 28 : FIELD_ROW_HEIGHT;
+        fieldHeight = compact ? 16 : FIELD_HEIGHT;
+
+        // Normal Mining Section (row 0-1)
+        int sectionTop = contentTop;
+        addSectionLabel(left, sectionTop, "screen.veinminerplus.config.section.normal");
+        int normalRowStart = sectionTop + SECTION_HEADER_HEIGHT + 2;
+        addField(left, normalRowStart, columnWidth, values[0]);
+        addField(left + columnWidth + COLUMN_GAP, normalRowStart, columnWidth, values[1]);
+
+        // Blast Mining Section (row 2-5)
+        int blastTop = normalRowStart + fieldRowHeight + SECTION_SPACING;
+        addSectionLabel(left, blastTop, "screen.veinminerplus.config.section.blast");
+        int blastRowStart = blastTop + SECTION_HEADER_HEIGHT + 2;
+        addField(left, blastRowStart, columnWidth, values[2]);
+        addField(left + columnWidth + COLUMN_GAP, blastRowStart, columnWidth, values[3]);
+        int blastRow2 = blastRowStart + fieldRowHeight;
+        addField(left, blastRow2, columnWidth, values[4]);
 
         int fullWidth = columnWidth * 2 + COLUMN_GAP;
-        controlsTop = contentTop + 4 * fieldRowHeight + 4;
-        int buttonHeight = compact ? 18 : 20;
-        int buttonStep = buttonHeight + 4;
-        buttonList.add(new StyledButton(100, left, controlsTop, columnWidth, buttonHeight,
+        int buttonHeight = 20;
+        int buttonRow1 = blastRow2 + fieldRowHeight;
+        buttonList.add(new StyledButton(100, left, buttonRow1, columnWidth, buttonHeight,
                 toggle("screen.veinminerplus.config.manhattan", manhattan)));
-        buttonList.add(new StyledButton(101, left + columnWidth + COLUMN_GAP, controlsTop, columnWidth, buttonHeight,
+        buttonList.add(new StyledButton(101, left + columnWidth + COLUMN_GAP, buttonRow1, columnWidth, buttonHeight,
                 toggle("screen.veinminerplus.config.auto_radius", autoReduce)));
-        buttonList.add(new StyledButton(102, left, controlsTop + buttonStep,
-                compact ? columnWidth : fullWidth, buttonHeight,
-                toggle("screen.veinminerplus.config.consume_hunger", consumeHunger)));
-        buttonList.add(new StyledButton(103, compact ? left + columnWidth + COLUMN_GAP : left,
-                controlsTop + buttonStep * (compact ? 1 : 2), compact ? columnWidth : fullWidth,
-                buttonHeight, modeText()));
-        controlsBottom = controlsTop + buttonStep * (compact ? 1 : 2) + buttonHeight;
 
-        int whitelistY = controlsBottom + WHITELIST_SECTION_GAP + WHITELIST_LABEL_HEIGHT + 4;
+        // Performance Section
+        int perfTop = buttonRow1 + fieldRowHeight + SECTION_SPACING;
+        addSectionLabel(left, perfTop, "screen.veinminerplus.config.section.performance");
+        int perfRowStart = perfTop + SECTION_HEADER_HEIGHT + 2;
+        addField(left, perfRowStart, columnWidth, values[5]);
+        addField(left + columnWidth + COLUMN_GAP, perfRowStart, columnWidth, values[6]);
+
+        // Player Behavior Section
+        int playerTop = perfRowStart + fieldRowHeight + SECTION_SPACING;
+        addSectionLabel(left, playerTop, "screen.veinminerplus.config.section.player");
+        int playerRowStart = playerTop + SECTION_HEADER_HEIGHT + 2;
+        buttonList.add(new StyledButton(102, left, playerRowStart, columnWidth, buttonHeight,
+                toggle("screen.veinminerplus.config.consume_hunger", consumeHunger)));
+        buttonList.add(new StyledButton(103, left + columnWidth + COLUMN_GAP, playerRowStart, columnWidth, buttonHeight,
+                modeText()));
+
+        controlsTop = playerRowStart + fieldRowHeight + SECTION_SPACING;
+        controlsBottom = controlsTop;
+
+        int whitelistY = playerRowStart + fieldRowHeight + SECTION_SPACING;
         whitelistBaseY = whitelistY;
         whitelistVisibleRows = Math.max(1,
-                Math.min(WHITELIST_MAX_VISIBLE_ROWS, (height - whitelistBaseY - 32) / WHITELIST_ROW_HEIGHT));
+                Math.min(WHITELIST_MAX_VISIBLE_ROWS, (height - whitelistBaseY - 40) / WHITELIST_ROW_HEIGHT));
         whitelistViewportBottom = whitelistBaseY + whitelistVisibleRows * WHITELIST_ROW_HEIGHT;
         whitelistX = left;
         whitelistWidth = Math.max(48,
@@ -316,6 +342,10 @@ public class VeinMinerConfigScreen extends GuiScreen {
         field.setText(value);
         field.setMaxStringLength(6);
         fields.add(field);
+    }
+
+    private void addSectionLabel(int x, int y, String translationKey) {
+        // 用于在drawScreen中绘制section标签
     }
 
     private String toggle(String key, boolean value) {
@@ -507,26 +537,47 @@ public class VeinMinerConfigScreen extends GuiScreen {
         int left = contentLeft();
         int columnWidth = columnWidth();
         int right = left + columnWidth * 2 + COLUMN_GAP;
+
+        // Draw header
         drawRect(left - 8, 6, right + 8, 25, HEADER_COLOR);
         drawRect(left - 8, 6, right + 8, 7, ACCENT_COLOR);
         String title = fontRenderer.trimStringToWidth(I18n.format("screen.veinminerplus.config.title"),
                 right - left);
         fontRenderer.drawString(title, (width - fontRenderer.getStringWidth(title)) / 2, 12, TEXT_COLOR);
-        drawPanel(left - 8, contentTop - 5, right + 8, controlsTop - 5, PANEL_COLOR, BORDER_COLOR);
-        drawPanel(left - 8, controlsTop - 3, right + 8, controlsBottom + 3, PANEL_COLOR, BORDER_COLOR);
-        drawPanel(left - 8, whitelistBaseY - WHITELIST_LABEL_HEIGHT - 3, right + 8,
-                whitelistViewportBottom, PANEL_COLOR, BORDER_COLOR);
-        drawRect(left - 8, whitelistBaseY - WHITELIST_LABEL_HEIGHT - 3, left - 6,
-                whitelistBaseY - 2, ACCENT_COLOR);
+
+        // Draw field groups with improved styling
+        int sectionTop = contentTop;
+
+        // Normal Mining Section
+        drawSectionHeader(left, sectionTop, right, "screen.veinminerplus.config.section.normal");
+        int normalRowStart = sectionTop + SECTION_HEADER_HEIGHT + 2;
+        drawFieldSection(left, normalRowStart, columnWidth, right, 0, 1);
+
+        // Blast Mining Section
+        int blastTop = normalRowStart + fieldRowHeight + SECTION_SPACING;
+        drawSectionHeader(left, blastTop, right, "screen.veinminerplus.config.section.blast");
+        int blastRowStart = blastTop + SECTION_HEADER_HEIGHT + 2;
+        drawFieldSection(left, blastRowStart, columnWidth, right, 2, 4);
+
+        // Performance Section
+        int perfTop = blastRowStart + fieldRowHeight * 2 + SECTION_SPACING;
+        drawSectionHeader(left, perfTop, right, "screen.veinminerplus.config.section.performance");
+        int perfRowStart = perfTop + SECTION_HEADER_HEIGHT + 2;
+        drawFieldSection(left, perfRowStart, columnWidth, right, 5, 6);
+
+        // Player Behavior Section
+        int playerTop = perfRowStart + fieldRowHeight + SECTION_SPACING;
+        drawSectionHeader(left, playerTop, right, "screen.veinminerplus.config.section.player");
+
+        // Footer
         drawRect(0, height - 24, width, height, BACKGROUND_COLOR);
         drawRect(left - 8, height - 25, right + 8, height - 24, BORDER_COLOR);
+
+        // Draw all fields
         for (int i = 0; i < fields.size(); i++) {
-            int x = left + (i % 2) * (columnWidth + COLUMN_GAP);
-            int y = contentTop + (i / 2) * fieldRowHeight;
-            String label = fontRenderer.trimStringToWidth(I18n.format(FIELD_LABELS[i]), columnWidth);
-            fontRenderer.drawString(label, x, y, MUTED_TEXT_COLOR);
             fields.get(i).drawTextBox();
         }
+
         if (!whitelistRows.isEmpty()) {
             int whitelistY = whitelistBaseY;
             String label = fontRenderer.trimStringToWidth(I18n.format("screen.veinminerplus.config.whitelist"),
@@ -537,7 +588,10 @@ public class VeinMinerConfigScreen extends GuiScreen {
             }
             drawWhitelistScrollbar();
         }
+
         super.drawScreen(mouseX, mouseY, partialTicks);
+
+        // Draw tooltips
         for (int i = 0; i < fields.size(); i++) {
             GuiTextField field = fields.get(i);
             if (mouseX >= field.x && mouseX < field.x + field.width
@@ -548,6 +602,27 @@ public class VeinMinerConfigScreen extends GuiScreen {
                 drawHoveringText(tooltip, mouseX, mouseY);
                 break;
             }
+        }
+    }
+
+    private void drawSectionHeader(int x, int y, int right, String translationKey) {
+        drawPanel(x - 8, y, right + 8, y + SECTION_HEADER_HEIGHT, SECTION_PANEL_COLOR, BORDER_COLOR);
+        drawRect(x - 8, y, x - 6, y + SECTION_HEADER_HEIGHT, ACCENT_COLOR);
+        String sectionTitle = I18n.format(translationKey);
+        fontRenderer.drawString(sectionTitle, x, y + 4, SECTION_TITLE_COLOR);
+    }
+
+    private void drawFieldSection(int left, int startY, int columnWidth, int right, int startField, int endField) {
+        int fullWidth = columnWidth * 2 + COLUMN_GAP;
+        drawPanel(left - 8, startY - 5, right + 8, startY + (endField - startField + 1) * fieldRowHeight,
+                PANEL_COLOR, BORDER_COLOR);
+
+        for (int i = startField; i <= endField && i < fields.size(); i++) {
+            int x = left + ((i - startField) % 2) * (columnWidth + COLUMN_GAP);
+            int y = startY + ((i - startField) / 2) * fieldRowHeight;
+            String label = fontRenderer.trimStringToWidth(I18n.format(FIELD_LABELS[i]), columnWidth);
+            fontRenderer.drawString(label, x, y, MUTED_TEXT_COLOR);
+            fields.get(i).drawTextBox();
         }
     }
 

@@ -98,6 +98,9 @@ public final class ChainEvents {
     private static final Map<Block, String> ORE_FAMILY_KEYS = new HashMap<>();
     // Cache for isOre checks; bounded by the size of the block registry.
     private static final Map<Block, Boolean> ORE_CACHE = new HashMap<>();
+    // Persistent cache for chunk scan results (LRU with 512 entry limit, manually managed)
+    private static final Map<Long, List<BlockPos>> PERSISTENT_CHUNK_SCAN_CACHE
+            = Collections.synchronizedMap(new HashMap<Long, List<BlockPos>>(512));
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
@@ -227,6 +230,12 @@ public final class ChainEvents {
 
         BlockPos target = event.getPos().immutable();
         BlockState state = event.getState();
+
+        // ✅ 优化：块被破坏时清除该区块的缓存
+        if (!event.isCanceled()) {
+            PERSISTENT_CHUNK_SCAN_CACHE.remove(chunkKey(target.getX() >> 4, target.getZ() >> 4));
+        }
+
         boolean rootBreak = !ACTIVE_JOBS.containsKey(player.getUUID());
         if (rootBreak) {
             debug("break event player={} canceled={} held={} pending={} target={} id={}",
@@ -1209,6 +1218,27 @@ public final class ChainEvents {
         /** Scans one chunk; returns true when that chunk had to be searched for the first time. */
         private boolean scanSparseChunk(BlockPos center, int chunkX, int chunkZ) {
             long key = chunkKey(chunkX, chunkZ);
+
+            // ✅ 优化1：快速区块距离检查（跳过范围外的区块）
+            if (!isChunkWithinDistance(center, chunkX, chunkZ, blastDistance, blastManhattan)) {
+                return false;
+            }
+
+            // ✅ 优化2：检查持久化缓存（第二次及以后的相同区块）
+            List<BlockPos> cachedMatches = PERSISTENT_CHUNK_SCAN_CACHE.get(key);
+            if (cachedMatches != null) {
+                for (BlockPos pos : cachedMatches) {
+                    if (withinBlastDistance(center, pos, blastDistance, blastManhattan) && examined.add(pos)) {
+                        if (mode == ChainMode.BLAST_SAME) {
+                            sawSameTarget = true;
+                        }
+                        sparseTargets.add(pos);
+                    }
+                }
+                return false;  // 不是第一次扫描
+            }
+
+            // 获取区块，优先使用已加载的区块（不同步生成）
             LevelChunk chunk = loadedChunks.get(key);
             if (chunk == null) {
                 chunk = level.getChunk(chunkX, chunkZ);
@@ -1223,6 +1253,16 @@ public final class ChainEvents {
                 chunk.findBlocks(this::matchesSparseState,
                         (pos, state) -> positions.add(pos.immutable()));
                 sparseChunkMatches.put(key, matches);
+                // ✅ 优化3：保存到持久化缓存（手工管理大小，最多512个）
+                if (PERSISTENT_CHUNK_SCAN_CACHE.size() >= 512) {
+                    // 清除一半以释放空间
+                    int toRemove = 256;
+                    for (Long k : PERSISTENT_CHUNK_SCAN_CACHE.keySet()) {
+                        if (toRemove-- <= 0) break;
+                        PERSISTENT_CHUNK_SCAN_CACHE.remove(k);
+                    }
+                }
+                PERSISTENT_CHUNK_SCAN_CACHE.put(key, matches);
                 firstScan = true;
                 sparseChunksScanned++;
                 sparseMatchedPositions += matches.size();
@@ -1241,6 +1281,24 @@ public final class ChainEvents {
                 }
             }
             return firstScan;
+        }
+
+        // ✅ 新增优化方法：快速区块距离检查
+        private boolean isChunkWithinDistance(BlockPos center, int chunkX, int chunkZ,
+                                              int distance, boolean manhattan) {
+            int centerChunkX = center.getX() >> 4;
+            int centerChunkZ = center.getZ() >> 4;
+
+            if (manhattan) {
+                int chunkDist = Math.abs(chunkX - centerChunkX)
+                              + Math.abs(chunkZ - centerChunkZ);
+                return chunkDist * 16 <= distance;
+            }
+
+            int dx = Math.abs(chunkX - centerChunkX);
+            int dz = Math.abs(chunkZ - centerChunkZ);
+            long dist = (long) dx * dx + (long) dz * dz;
+            return dist * 256 <= (long) distance * distance;
         }
 
         private void adjustBlastRadiusForTps() {

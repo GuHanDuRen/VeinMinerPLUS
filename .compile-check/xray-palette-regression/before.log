@@ -1,0 +1,15 @@
+Exception in thread "main" java.lang.reflect.InvocationTargetException
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:118)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at XrayColorSelectionRegression.main(XrayColorSelectionRegression.java:361)
+Caused by: java.lang.AssertionError: missing config gives nine empty slots with their own preset colors
+	at XrayColorSelectionFixture.check(XrayColorSelectionFixture.java:210)
+	at XrayColorSelectionFixture.run(XrayColorSelectionFixture.java:266)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at XrayColorSelectionRegression.main(XrayColorSelectionRegression.java:361)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at jdk.compiler/com.sun.tools.javac.launcher.Main.execute(Main.java:484)
+	at jdk.compiler/com.sun.tools.javac.launcher.Main.run(Main.java:208)
+	at jdk.compiler/com.sun.tools.javac.launcher.Main.main(Main.java:135)

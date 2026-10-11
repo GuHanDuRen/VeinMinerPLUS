@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VeinMiner Plus 配置界面 - 新设计预览</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: #0a0e12;
+            color: #e5eef2;
+            padding: 20px;
+        }
+
+        .preview-container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #59d8bc;
+            text-shadow: 0 0 20px rgba(89, 216, 188, 0.3);
+        }
+
+        .gui-window {
+            background: linear-gradient(135deg, #0d1117 0%, #101820 100%);
+            border: 1px solid #2b414c;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        .gui-header {
+            background: linear-gradient(90deg, #1d3039 0%, #1a2a32 100%);
+            padding: 12px 16px;
+            border-bottom: 3px solid #59d8bc;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .gui-header h2 {
+            font-size: 18px;
+            color: #e5eef2;
+            flex: 1;
+        }
+
+        .gui-header .subtitle {
+            font-size: 12px;
+            color: #96adb7;
+        }
+
+        .gui-content {
+            padding: 16px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        .section-header {
+            background: linear-gradient(90deg, #141c26 0%, #0f1a22 100%);
+            border: 1px solid #2b414c;
+            border-left: 3px solid #59d8bc;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            border-radius: 4px;
+            color: #59d8bc;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .fields-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding: 0 4px;
+        }
+
+        .field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .field-label {
+            font-size: 13px;
+            color: #96adb7;
+            font-weight: 500;
+        }
+
+        .field-input {
+            background: #101a22;
+            border: 1px solid #2b414c;
+            border-radius: 3px;
+            padding: 8px 10px;
+            color: #e5eef2;
+            font-size: 13px;
+            transition: all 0.2s ease;
+        }
+
+        .field-input:focus {
+            outline: none;
+            border-color: #59d8bc;
+            box-shadow: 0 0 8px rgba(89, 216, 188, 0.2);
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            padding: 0 4px;
+            margin-bottom: 12px;
+        }
+
+        .toggle-btn {
+            background: linear-gradient(135deg, #21333e 0%, #1a2a32 100%);
+            border: 1px solid #2b414c;
+            border-radius: 4px;
+            padding: 10px 12px;
+            color: #e5eef2;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toggle-btn:hover {
+            background: linear-gradient(135deg, #2d4855 0%, #233843 100%);
+            border-color: #59d8bc;
+        }
+
+        .toggle-indicator {
+            width: 12px;
+            height: 16px;
+            background: #2b414c;
+            border-radius: 2px;
+            display: inline-block;
+        }
+
+        .toggle-btn.active .toggle-indicator {
+            background: #59d8bc;
+        }
+
+        .whitelist-section {
+            background: #141c26;
+            border: 1px solid #2b414c;
+            border-radius: 4px;
+            padding: 12px;
+            margin-top: 16px;
+        }
+
+        .whitelist-label {
+            font-size: 13px;
+            color: #e5eef2;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .whitelist-rows {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .whitelist-row {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .whitelist-input {
+            flex: 1;
+            background: #101a22;
+            border: 1px solid #2b414c;
+            border-radius: 3px;
+            padding: 6px 8px;
+            color: #e5eef2;
+            font-size: 12px;
+        }
+
+        .whitelist-btn {
+            background: linear-gradient(135deg, #21333e 0%, #1a2a32 100%);
+            border: 1px solid #2b414c;
+            border-radius: 3px;
+            color: #e5eef2;
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .whitelist-btn:hover {
+            background: linear-gradient(135deg, #2d4855 0%, #233843 100%);
+            border-color: #59d8bc;
+        }
+
+        .gui-footer {
+            background: #0a0e12;
+            border-top: 1px solid #2b414c;
+            padding: 12px 16px;
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 8px 24px;
+            border: 1px solid #2b414c;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+            min-width: 80px;
+        }
+
+        .btn-default {
+            background: linear-gradient(135deg, #21333e 0%, #1a2a32 100%);
+            color: #e5eef2;
+        }
+
+        .btn-default:hover {
+            background: linear-gradient(135deg, #2d4855 0%, #233843 100%);
+            border-color: #59d8bc;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #59d8bc 0%, #45b9a0 100%);
+            color: #102820;
+            border-color: #59d8bc;
+            font-weight: bold;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #82e5ce 0%, #6ce0bb 100%);
+            box-shadow: 0 0 12px rgba(89, 216, 188, 0.3);
+        }
+
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 40px;
+        }
+
+        .comparison h3 {
+            color: #59d8bc;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .features {
+            background: #141c26;
+            border: 1px solid #2b414c;
+            border-radius: 4px;
+            padding: 16px;
+            margin-top: 30px;
+        }
+
+        .features h3 {
+            color: #59d8bc;
+            margin-bottom: 12px;
+        }
+
+        .features ul {
+            list-style: none;
+        }
+
+        .features li {
+            padding: 6px 0;
+            color: #96adb7;
+            border-bottom: 1px solid #2b414c;
+        }
+
+        .features li:last-child {
+            border-bottom: none;
+        }
+
+        .features li:before {
+            content: "✓ ";
+            color: #59d8bc;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="preview-container">
+        <h1>🎮 VeinMiner Plus - 新配置界面设计</h1>
+
+        <div class="gui-window">
+            <!-- Header -->
+            <div class="gui-header">
+                <div>
+                    <h2>VeinMiner Plus 配置</h2>
+                    <div class="subtitle">调整您的挖矿设置</div>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div class="gui-content">
+                <!-- Normal Mining Section -->
+                <div class="section">
+                    <div class="section-header">⛏️ 普通挖矿</div>
+                    <div class="fields-grid">
+                        <div class="field-group">
+                            <label class="field-label">最大方块数量</label>
+                            <input type="number" class="field-input" value="256" />
+                        </div>
+                        <div class="field-group">
+                            <label class="field-label">每刻速度</label>
+                            <input type="number" class="field-input" value="10" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Blast Mining Section -->
+                <div class="section">
+                    <div class="section-header">💣 高级爆炸挖矿</div>
+                    <div class="fields-grid">
+                        <div class="field-group">
+                            <label class="field-label">最大方块数量</label>
+                            <input type="number" class="field-input" value="512" />
+                        </div>
+                        <div class="field-group">
+                            <label class="field-label">每刻速度</label>
+                            <input type="number" class="field-input" value="5" />
+                        </div>
+                    </div>
+                    <div class="fields-grid">
+                        <div class="field-group">
+                            <label class="field-label">搜索距离</label>
+                            <input type="number" class="field-input" value="32" />
+                        </div>
+                    </div>
+                    <div class="button-group">
+                        <button class="toggle-btn active">
+                            <span class="toggle-indicator"></span>
+                            曼哈顿距离: 开启
+                        </button>
+                        <button class="toggle-btn">
+                            <span class="toggle-indicator"></span>
+                            自动降低半径: 关闭
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Performance Section -->
+                <div class="section">
+                    <div class="section-header">⚡ 性能优化</div>
+                    <div class="fields-grid">
+                        <div class="field-group">
+                            <label class="field-label">区块扫描速度</label>
+                            <input type="number" class="field-input" value="4" />
+                        </div>
+                        <div class="field-group">
+                            <label class="field-label">低TPS阈值</label>
+                            <input type="number" class="field-input" value="10" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Player Behavior Section -->
+                <div class="section">
+                    <div class="section-header">👤 玩家行为</div>
+                    <div class="button-group">
+                        <button class="toggle-btn">
+                            <span class="toggle-indicator"></span>
+                            消耗饥饿值: 开启
+                        </button>
+                        <button class="toggle-btn">
+                            <span class="toggle-indicator"></span>
+                            挖矿模式: 普通
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Whitelist Section -->
+                <div class="whitelist-section">
+                    <div class="whitelist-label">📦 矿物白名单</div>
+                    <div class="whitelist-rows">
+                        <div class="whitelist-row">
+                            <input type="text" class="whitelist-input" value="*ore" readonly />
+                            <button class="whitelist-btn" title="删除">−</button>
+                        </div>
+                        <div class="whitelist-row">
+                            <input type="text" class="whitelist-input" value="ore:copper" />
+                            <button class="whitelist-btn" title="删除">−</button>
+                        </div>
+                        <div class="whitelist-row">
+                            <input type="text" class="whitelist-input" value="ore:iron" />
+                            <button class="whitelist-btn" title="删除">−</button>
+                        </div>
+                        <div class="whitelist-row">
+                            <input type="text" class="whitelist-input" placeholder="输入新项..." />
+                            <button class="whitelist-btn" title="添加">+</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="gui-footer">
+                <button class="btn btn-default">重置为默认</button>
+                <button class="btn btn-primary">完成</button>
+                <button class="btn btn-default">取消</button>
+            </div>
+        </div>
+
+        <!-- Features -->
+        <div class="features">
+            <h3>✨ 新设计改进</h3>
+            <ul>
+                <li><strong>分section显示</strong> - 将配置按功能分组（普通、爆炸、性能、玩家），结构更清晰</li>
+                <li><strong>改进排版</strong> - 更合理的间距和对齐，信息层次更明确</li>
+                <li><strong>增强视觉反馈</strong> - hover效果、focus状态、toggle按钮指示器等</li>
+                <li><strong>更好的配色对比</strong> - 深色主题中保持良好可读性，accent颜色突出重点</li>
+                <li><strong>直观的交互设计</strong> - toggle按钮有清晰的on/off指示器，按钮状态一目了然</li>
+                <li><strong>响应式布局</strong> - 自动适应窗口大小，在小屏幕上自动切换单列显示</li>
+                <li><strong>Section标题图标</strong> - 用emoji快速识别不同功能区域</li>
+                <li><strong>改进的输入框**样式 - 明确的边框和focus状态，输入体验更好</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

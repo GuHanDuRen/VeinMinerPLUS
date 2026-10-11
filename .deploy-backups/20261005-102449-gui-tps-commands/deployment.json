@@ -1,0 +1,21 @@
+{
+  "DeployedAt": "2026-10-05T10:24:49.3092027+08:00",
+  "Source": "D:\\VeinMinerPLUS\\build\\libs\\veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+  "Status": "verified",
+  "Targets": [
+    {
+      "Role": "client",
+      "Destination": "E:\\PCL\\.minecraft\\versions\\All the Mods 10\\mods\\veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+      "Backup": "D:\\VeinMinerPLUS\\.deploy-backups\\20261005-102449-gui-tps-commands\\client\\veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+      "PreviousSHA256": "C7AF756E1248D37134894981EAB5D419A4CD2D14D3BDEBD805A9062C39A3A6A4",
+      "NewSHA256": "416D69FEC639CB58EF2F66D6D11EB47248C7757B5A944673BE74A5CA919A10D9"
+    },
+    {
+      "Role": "server",
+      "Destination": "E:\\MSL\\MSL\\Server70\\mods\\veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+      "Backup": "D:\\VeinMinerPLUS\\.deploy-backups\\20261005-102449-gui-tps-commands\\server\\veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+      "PreviousSHA256": "C7AF756E1248D37134894981EAB5D419A4CD2D14D3BDEBD805A9062C39A3A6A4",
+      "NewSHA256": "416D69FEC639CB58EF2F66D6D11EB47248C7757B5A944673BE74A5CA919A10D9"
+    }
+  ]
+}

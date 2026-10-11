@@ -1,0 +1,8 @@
+Manifest-Version: 1.0
+Implementation-Title: forge-1.12.2
+Implementation-Version: 1.2.5-forge1122
+Specification-Vendor: Extra_RawStyle
+Specification-Title: veinminerplus
+Specification-Version: 1
+Implementation-Vendor: Extra_RawStyle
+

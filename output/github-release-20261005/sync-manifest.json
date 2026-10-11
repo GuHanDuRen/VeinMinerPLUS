@@ -1,0 +1,29 @@
+{
+  "commit": "c8c4619629b768a4d920838bd536a9fdd06bc725",
+  "tag": "v1.2.35",
+  "release": "https://github.com/GuHanDuRen/VeinMinerPLUS/releases/tag/v1.2.35",
+  "phase": "verified",
+  "assets": [
+    {
+      "name": "veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+      "id": 611286901,
+      "old_id": 611282874,
+      "sha256": "416d69fec639cb58ef2f66d6d11eb47248c7757b5a944673be74a5ca919a10d9",
+      "size": 135382
+    },
+    {
+      "name": "veinminerplusG-1.20.1-forge-1.2.23.jar",
+      "id": 611286922,
+      "old_id": 611282852,
+      "sha256": "d58a9021070df80abcbe8b09d50a191a84cc2bc8c76dc4d5f4bb61382e503d1b",
+      "size": 130881
+    },
+    {
+      "name": "veinminerplusG-1.12.2-forge-1.2.21.jar",
+      "id": 611286947,
+      "old_id": 611282840,
+      "sha256": "56ded36f5c9f8cd165764fa8410d70bbc5c2146f1c982b037cae146e5c240be8",
+      "size": 124079
+    }
+  ]
+}

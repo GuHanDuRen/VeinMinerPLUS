@@ -1,0 +1,23 @@
+[
+  {
+    "name": "veinminerplusG-1.21.1-neoforge-1.2.35.jar",
+    "id": 609909240,
+    "size": 130585,
+    "sha256": "c952fbbaf9a39a9b276537c1c1fd089f39d176782074949c6494a6b20c6bf495",
+    "download_url": "https://github.com/GuHanDuRen/VeinMinerPLUS/releases/download/v1.2.35/veinminerplusG-1.21.1-neoforge-1.2.35.jar"
+  },
+  {
+    "name": "veinminerplusG-1.20.1-forge-1.2.23.jar",
+    "id": 609909270,
+    "size": 126762,
+    "sha256": "0a14e950c1576fe6eafb415d0fc3b6265f596c4ff2684655951561e1d315fdfb",
+    "download_url": "https://github.com/GuHanDuRen/VeinMinerPLUS/releases/download/v1.2.35/veinminerplusG-1.20.1-forge-1.2.23.jar"
+  },
+  {
+    "name": "veinminerplusG-1.12.2-forge-1.2.21.jar",
+    "id": 609909302,
+    "size": 117161,
+    "sha256": "8261b510f8b825a05ee76df5c6e392211781affa913860f9403254b3dfd9dd91",
+    "download_url": "https://github.com/GuHanDuRen/VeinMinerPLUS/releases/download/v1.2.35/veinminerplusG-1.12.2-forge-1.2.21.jar"
+  }
+]

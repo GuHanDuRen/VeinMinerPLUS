@@ -1,0 +1,1 @@
+package net.minecraft.client.resources; public class I18n { public static String template = "TPS %s radius %s to %s"; public static String format(String key, Object... args) { return String.format(java.util.Locale.ROOT, template, args); } }

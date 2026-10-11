@@ -1,0 +1,8 @@
+GregTech Lite diagnostic (2026-08-28)
+- Instance is Minecraft 1.12.2 Forge 14.23.5.2860 (latest.log), not 1.20.1.
+- Loaded jar: E:\PCL\.minecraft\versions\GregTech Lite\mods\veinminerplus-1.2.5-forge1122.jar.
+- Config: config\veinminerplus.cfg; blastAutoReduceRadius=true; blastLowTpsThreshold=15; blastSearchDistance=20; maxBlastBlocksPerTick=64; maxBlastBlocks=32767; normal max per tick=8.
+- Legacy ChainEvents.java: each server tick calls ChainJob.tick(); tickSparseBlast/tickGraph breaks at most configured per-tick; adjustBlastRadiusForTps() reads MinecraftServer.tickTimeArray and once TPS <15 halves blast radius, clears search queues, and sends status message. This does not reduce per-tick break rate, but sparse scan can be very slow due scanning/loading.
+- Sparse blast has SEARCH_CHECKS_PER_TICK=16384 and SPARSE_CHUNK_LOADS_PER_TICK=1; each chunk scan iterates up to 16*16*256 blocks. At radius 20 it may scan many chunks and load only one missing chunk per tick, so progress count can advance slowly even if TPS is nominal.
+- latest.log has no 'Can't keep up' lines or VeinMiner errors, but has a possible lag source: MultiblockSpaceElevator at [17,3,20] taking 190,159,900 ns (~190 ms) on 2026-08-28 18:30:12; and GregTech cascading worldgen chunk-load warnings at 18:31:47 and 18:36:24-25. These imply actual TPS dips during/around test.
+- Video contact sheet counts: 12800 @ f4_20, 12990 @ f4_45, 13438 @ f4_55, 13817 @ f5_00, 13917 @ f5_50; apparent slow visible increments likely due sparse scan/one-chunk-load budget and/or TPS adaptation.

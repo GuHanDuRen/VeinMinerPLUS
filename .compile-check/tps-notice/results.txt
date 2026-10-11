@@ -1,0 +1,4 @@
+neoforge1211: PASS 469 assertions: timer, refresh, gates, disconnect, wrapping, positions, color
+forge1201: PASS 469 assertions: timer, refresh, gates, disconnect, wrapping, positions, color
+forge1122: PASS 469 assertions: timer, refresh, gates, disconnect, wrapping, positions, color
+NOTE: Real source methods with minimal API/font stubs. No actual Minecraft rendering, packet delivery, or OpenGL execution.
