@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -41,16 +42,15 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.EventPriority;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.neoforge.capabilities.Capabilities;
-import net.neoforged.neoforge.event.EventHooks;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
-import net.neoforged.neoforge.event.level.BlockEvent;
-import net.neoforged.neoforge.event.level.BlockDropsEvent;
-import net.neoforged.neoforge.event.tick.PlayerTickEvent;
-import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.minecraftforge.common.capabilities.ForgeCapabilities;
+import net.minecraftforge.common.ForgeHooks;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.EntityJoinLevelEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
+import net.minecraftforge.event.level.BlockEvent;
+import net.minecraftforge.eventbus.api.EventPriority;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 public final class ChainEvents {
     // Work is deliberately bounded so one large blast cannot monopolize the server thread.
@@ -89,6 +89,8 @@ public final class ChainEvents {
 
     private static final TagKey<Block> ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.withDefaultNamespace("ores"));
+    private static final TagKey<Block> FORGE_ORE_BLOCKS = TagKey.create(Registries.BLOCK,
+            ResourceLocation.fromNamespaceAndPath("forge", "ores"));
     private static final TagKey<Block> COMMON_ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.fromNamespaceAndPath("c", "ores"));
     private static final List<BlockPos> NORMAL_OFFSETS = createNormalOffsets();
@@ -114,6 +116,8 @@ public final class ChainEvents {
     private static final Set<UUID> RIGHT_CLICK_GUARD = new HashSet<>();
     private static final Set<UUID> PENDING_JOBS = new HashSet<>();
     private static final Map<UUID, DropBuffer> PENDING_DROPS = new HashMap<>();
+    private static final Map<UUID, BlockPos> PENDING_DROP_ORIGINS = new HashMap<>();
+    private static final ThreadLocal<DropBuffer> CAPTURING_DROPS = new ThreadLocal<>();
     private static final Map<UUID, BreakFace> LAST_BREAK_FACES = new HashMap<>();
     private static final Map<UUID, HungerStart> HUNGER_STARTS = new HashMap<>();
     private static final Map<UUID, HungerProtection> HUNGER_PROTECTIONS = new HashMap<>();
@@ -140,12 +144,13 @@ public final class ChainEvents {
             HungerProtection protection = HUNGER_PROTECTIONS.remove(id);
             if (protection != null) {
                 protection.restore();
-                player.removeEffect(ModEffects.CHAIN_SATURATION);
+                player.removeEffect(ModEffects.CHAIN_SATURATION.get());
             }
         }
         PLAYER_MODES.remove(id);
         HELD_KEYS.remove(id);
         PENDING_JOBS.remove(id);
+        PENDING_DROP_ORIGINS.remove(id);
         LAST_BREAK_FACES.remove(id);
         HUNGER_STARTS.remove(id);
         HUNGER_PROTECTIONS.remove(id);
@@ -156,7 +161,7 @@ public final class ChainEvents {
         if (event.getEntity() instanceof ServerPlayer player
                 && event.getAction() == PlayerInteractEvent.LeftClickBlock.Action.START) {
             LAST_BREAK_FACES.put(player.getUUID(), new BreakFace(event.getPos().immutable(), event.getFace()));
-            if (!Config.CONSUME_HUNGER.getAsBoolean() && !player.isCreative()) {
+            if (!Config.CONSUME_HUNGER.get() && !player.isCreative()) {
                 HUNGER_STARTS.put(player.getUUID(),
                         new HungerStart(event.getPos().immutable(), HungerSnapshot.capture(player)));
             }
@@ -214,7 +219,7 @@ public final class ChainEvents {
                 || !(event.getPlayer() instanceof ServerPlayer player)
                 || !HELD_KEYS.contains(player.getUUID())
                 || ACTIVE_JOBS.containsKey(player.getUUID())
-                || Config.CONSUME_HUNGER.getAsBoolean()
+                || Config.CONSUME_HUNGER.get()
                 || player.isCreative()) {
             return;
         }
@@ -284,12 +289,13 @@ public final class ChainEvents {
         Direction face = resolveBreakFace(player, target);
         DropBuffer drops = new DropBuffer();
         PENDING_DROPS.put(player.getUUID(), drops);
+        PENDING_DROP_ORIGINS.put(player.getUUID(), target);
         // ✅ 移除无效操作：立即添加又删除 PENDING_JOBS 没有意义
         HungerStart hungerStart = HUNGER_STARTS.remove(player.getUUID());
         HungerSnapshot hungerBefore = hungerStart != null && hungerStart.pos().equals(target)
                 ? hungerStart.snapshot()
                 : HungerSnapshot.capture(player);
-        if (!Config.CONSUME_HUNGER.getAsBoolean() && !player.isCreative()) {
+        if (!Config.CONSUME_HUNGER.get() && !player.isCreative()) {
             HUNGER_PROTECTIONS.put(player.getUUID(), new HungerProtection(player, hungerBefore));
         }
         ACTIVE_JOBS.put(player.getUUID(), new ChainJob(level, player, target, state.getBlock(), face, mode, drops,
@@ -299,31 +305,43 @@ public final class ChainEvents {
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onBlockDrops(BlockDropsEvent event) {
-        if (!(event.getBreaker() instanceof ServerPlayer player)) {
+    public void onEntityJoinLevel(EntityJoinLevelEvent event) {
+        if (!(event.getLevel() instanceof ServerLevel)
+                || event.loadedFromDisk()
+                || !(event.getEntity() instanceof ItemEntity || event.getEntity() instanceof ExperienceOrb)) {
             return;
         }
 
-        DropBuffer drops = PENDING_DROPS.get(player.getUUID());
-        if (drops == null) {
-            ChainJob job = ACTIVE_JOBS.get(player.getUUID());
-            drops = job == null ? null : job.drops;
-        }
-        if (drops == null) {
+        DropBuffer drops = CAPTURING_DROPS.get();
+        if (drops != null) {
+            captureEntity(event, drops);
             return;
         }
 
-        for (ItemEntity item : event.getDrops()) {
+        for (Map.Entry<UUID, DropBuffer> entry : PENDING_DROPS.entrySet()) {
+            BlockPos origin = PENDING_DROP_ORIGINS.get(entry.getKey());
+            if (origin != null && event.getEntity().blockPosition().distSqr(origin) <= 9.0D) {
+                captureEntity(event, entry.getValue());
+                return;
+            }
+        }
+    }
+
+    private static void captureEntity(EntityJoinLevelEvent event, DropBuffer drops) {
+        if (event.getEntity() instanceof ItemEntity item) {
             drops.add(item.getItem());
+            event.setCanceled(true);
+        } else if (event.getEntity() instanceof ExperienceOrb orb) {
+            drops.addExperience(orb.getValue());
+            event.setCanceled(true);
         }
-        event.getDrops().clear();
-        drops.addExperience(event.getDroppedExperience());
-        event.setDroppedExperience(0);
-        PENDING_DROPS.remove(player.getUUID(), drops);
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onServerTick(ServerTickEvent.Post event) {
+    public void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) {
+            return;
+        }
         for (ChainJob job : new ArrayList<>(ACTIVE_JOBS.values())) {
             job.tick();
         }
@@ -333,8 +351,8 @@ public final class ChainEvents {
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onPlayerTick(PlayerTickEvent.Post event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
+    public void onPlayerTick(TickEvent.PlayerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END || !(event.player instanceof ServerPlayer player)) {
             return;
         }
 
@@ -343,16 +361,16 @@ public final class ChainEvents {
         if (protection == null) {
             return;
         }
-        if (Config.CONSUME_HUNGER.getAsBoolean() || player.isCreative() || player.isRemoved()) {
+        if (Config.CONSUME_HUNGER.get() || player.isCreative() || player.isRemoved()) {
             HUNGER_PROTECTIONS.remove(id, protection);
-            player.removeEffect(ModEffects.CHAIN_SATURATION);
+            player.removeEffect(ModEffects.CHAIN_SATURATION.get());
             return;
         }
 
         protection.restore();
         if (protection.finishPending()) {
             HUNGER_PROTECTIONS.remove(id, protection);
-            player.removeEffect(ModEffects.CHAIN_SATURATION);
+            player.removeEffect(ModEffects.CHAIN_SATURATION.get());
         }
     }
 
@@ -428,7 +446,7 @@ public final class ChainEvents {
         if (container && mode != ChainMode.USE_BLOCK) {
             return "container";
         }
-        if (!player.isCreative() && !EventHooks.doPlayerHarvestCheck(player, state, level, pos)) {
+        if (!player.isCreative() && !ForgeHooks.isCorrectToolForDrops(state, player)) {
             return "harvestCheck=false";
         }
         return null;
@@ -485,16 +503,17 @@ public final class ChainEvents {
     }
 
     private static ChainMode configuredDefaultMode() {
-        return ChainMode.fromOrdinal(Config.DEFAULT_MODE.getAsInt());
+        return ChainMode.fromOrdinal(Config.DEFAULT_MODE.get());
     }
 
     private static boolean isContainer(ServerLevel level, BlockPos pos, BlockState state) {
+        BlockEntity blockEntity = level.getBlockEntity(pos);
         // Check BlockEntity first (usually fastest)
-        if (level.getBlockEntity(pos) instanceof Container) {
+        if (blockEntity instanceof Container) {
             return true;
         }
         // Check capabilities (common for modded containers)
-        if (level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null) != null) {
+        if (blockEntity != null && blockEntity.getCapability(ForgeCapabilities.ITEM_HANDLER).isPresent()) {
             return true;
         }
         // Check menu provider last (usually slowest)
@@ -514,7 +533,7 @@ public final class ChainEvents {
     }
 
     private static boolean isOreUncached(BlockState state) {
-        if (state.is(ORE_BLOCKS) || state.is(COMMON_ORE_BLOCKS)) {
+        if (state.is(ORE_BLOCKS) || state.is(FORGE_ORE_BLOCKS) || state.is(COMMON_ORE_BLOCKS)) {
             return true;
         }
 
@@ -585,15 +604,28 @@ public final class ChainEvents {
         }
         // Use the same server-side entry point as a real player break. This keeps
         // BlockEvent, drops, tool damage, block entities, and client updates in sync.
-        boolean consumeHunger = Config.CONSUME_HUNGER.getAsBoolean() && !player.isCreative();
-        boolean broken = player.gameMode.destroyBlock(pos);
-        if (broken && consumeHunger) {
-            player.getFoodData().addExhaustion(0.005F);
+        ChainJob job = ACTIVE_JOBS.get(player.getUUID());
+        DropBuffer previous = CAPTURING_DROPS.get();
+        if (job != null) {
+            CAPTURING_DROPS.set(job.drops);
         }
-        if (broken) {
-            showHungerProtectionEffect(player);
+        try {
+            boolean consumeHunger = Config.CONSUME_HUNGER.get() && !player.isCreative();
+            boolean broken = player.gameMode.destroyBlock(pos);
+            if (broken && consumeHunger) {
+                player.getFoodData().addExhaustion(0.005F);
+            }
+            if (broken) {
+                showHungerProtectionEffect(player);
+            }
+            return broken;
+        } finally {
+            if (previous == null) {
+                CAPTURING_DROPS.remove();
+            } else {
+                CAPTURING_DROPS.set(previous);
+            }
         }
-        return broken;
     }
 
     private static boolean breakOne(ServerLevel level, ServerPlayer player, BlockPos pos, Block targetBlock,
@@ -603,8 +635,8 @@ public final class ChainEvents {
     }
 
     private static void showHungerProtectionEffect(ServerPlayer player) {
-        if (!Config.CONSUME_HUNGER.getAsBoolean() && !player.isCreative()) {
-            player.addEffect(new MobEffectInstance(ModEffects.CHAIN_SATURATION, 40, 255, false, true, true));
+        if (!Config.CONSUME_HUNGER.get() && !player.isCreative()) {
+            player.addEffect(new MobEffectInstance(ModEffects.CHAIN_SATURATION.get(), 40, 255, false, true, true));
         }
     }
 
@@ -751,7 +783,7 @@ public final class ChainEvents {
     }
 
     private static void debug(String message, Object... args) {
-        if (Config.DEBUG_LOGGING.getAsBoolean()) {
+        if (Config.DEBUG_LOGGING.get()) {
             VeinMinerPlus.LOGGER.info("[chain-debug] " + message, args);
         }
     }
@@ -775,7 +807,7 @@ public final class ChainEvents {
 
             int remaining = stack.getCount();
             for (ItemStack existing : items) {
-                if (!ItemStack.isSameItemSameComponents(existing, stack)) {
+                if (!ItemStack.isSameItemSameTags(existing, stack)) {
                     continue;
                 }
                 int space = existing.getMaxStackSize() - existing.getCount();
@@ -870,8 +902,8 @@ public final class ChainEvents {
 
             int attemptsThisTick = 0;
             int checks = 0;
-            int attemptLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.getAsInt();
-            int totalLimit = Config.MAX_NORMAL_BLOCKS.getAsInt();
+            int attemptLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.get();
+            int totalLimit = Config.MAX_NORMAL_BLOCKS.get();
             while (checks < SEARCH_CHECKS_PER_TICK && attemptsThisTick < attemptLimit
                     && attempted < totalLimit
                     && !frontier.isEmpty()
@@ -980,10 +1012,10 @@ public final class ChainEvents {
             // 1x1 continues behind it because the origin is already broken.
             this.areaDepth = mode.isArea() && mode != ChainMode.AREA_1X1 ? 0 : 1;
             this.whitelist = configuredWhitelist();
-            this.totalLimit = mode.isBlast() ? Config.MAX_BLAST_BLOCKS.getAsInt() : Config.MAX_NORMAL_BLOCKS.getAsInt();
-            this.areaDepthLimit = Config.MAX_NORMAL_BLOCKS.getAsInt();
-            this.blastDistance = Config.BLAST_SEARCH_DISTANCE.getAsInt();
-            this.blastManhattan = Config.BLAST_MANHATTAN.getAsBoolean();
+            this.totalLimit = mode.isBlast() ? Config.MAX_BLAST_BLOCKS.get() : Config.MAX_NORMAL_BLOCKS.get();
+            this.areaDepthLimit = Config.MAX_NORMAL_BLOCKS.get();
+            this.blastDistance = Config.BLAST_SEARCH_DISTANCE.get();
+            this.blastManhattan = Config.BLAST_MANHATTAN.get();
             BlockState targetState = targetBlock.defaultBlockState();
             this.sparseBlast = mode == ChainMode.BLAST_SAME
                     || mode == ChainMode.BLAST_ORES
@@ -1019,6 +1051,7 @@ public final class ChainEvents {
 
         private void tick() {
             PENDING_DROPS.remove(player.getUUID(), drops);
+            PENDING_DROP_ORIGINS.remove(player.getUUID(), origin);
             if (!isToolSlotUnchanged()) {
                 finish();
                 return;
@@ -1056,9 +1089,9 @@ public final class ChainEvents {
         private void tickGraph() {
             int checks = 0;
             int breaks = 0;
-            int breakLimit = mode.isBlast() ? Config.MAX_BLAST_BLOCKS_PER_TICK.getAsInt()
+            int breakLimit = mode.isBlast() ? Config.MAX_BLAST_BLOCKS_PER_TICK.get()
                     : mode == ChainMode.NORMAL || mode == ChainMode.USE_BLOCK
-                            ? Config.MAX_NORMAL_BLOCKS_PER_TICK.getAsInt()
+                            ? Config.MAX_NORMAL_BLOCKS_PER_TICK.get()
                     : BLOCK_BREAKS_PER_TICK;
             UUID playerId = player.getUUID();
             boolean heldKey = HELD_KEYS.contains(playerId);
@@ -1113,7 +1146,7 @@ public final class ChainEvents {
             int breaks = 0;
             // Area modes share the configurable normal per-tick budget instead of a
             // fixed low constant, so they are no longer throttled to 8 blocks per tick.
-            int breakLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.getAsInt();
+            int breakLimit = Config.MAX_NORMAL_BLOCKS_PER_TICK.get();
             UUID playerId = player.getUUID();
             boolean heldKey = HELD_KEYS.contains(playerId);
 
@@ -1154,8 +1187,8 @@ public final class ChainEvents {
 
         private void tickSparseBlast() {
             int breaks = 0;
-            int breakLimit = Config.MAX_BLAST_BLOCKS_PER_TICK.getAsInt();
-            int scanBudget = Config.BLAST_CHUNK_SCANS_PER_TICK.getAsInt();
+            int breakLimit = Config.MAX_BLAST_BLOCKS_PER_TICK.get();
+            int scanBudget = Config.BLAST_CHUNK_SCANS_PER_TICK.get();
             UUID playerId = player.getUUID();
             boolean heldKey = HELD_KEYS.contains(playerId);
 
@@ -1352,12 +1385,12 @@ public final class ChainEvents {
 
         private void adjustBlastRadiusForTps() {
             double tps = currentTps(level);
-            if (lowTpsWarned || tps >= Config.BLAST_LOW_TPS_THRESHOLD.getAsInt()) {
+            if (lowTpsWarned || tps >= Config.BLAST_LOW_TPS_THRESHOLD.get()) {
                 return;
             }
 
             lowTpsWarned = true;
-            if (Config.BLAST_AUTO_REDUCE_RADIUS.getAsBoolean() && blastDistance > 3) {
+            if (Config.BLAST_AUTO_REDUCE_RADIUS.get() && blastDistance > 3) {
                 int oldDistance = blastDistance;
                 blastDistance = Math.max(3, blastDistance / 2);
                 if (!sparseBlast) {
@@ -1397,6 +1430,8 @@ public final class ChainEvents {
             // ✅ 清除进度显示，避免松开按键后数字残留
             player.displayClientMessage(Component.empty(), true);
 
+            PENDING_DROPS.remove(player.getUUID(), drops);
+            PENDING_DROP_ORIGINS.remove(player.getUUID(), origin);
             drops.flush(player.serverLevel(), player);
             ACTIVE_JOBS.remove(player.getUUID(), this);
             HungerProtection protection = HUNGER_PROTECTIONS.get(player.getUUID());
@@ -1415,7 +1450,7 @@ public final class ChainEvents {
         }
 
         private void maintainHungerProtection() {
-            if (!Config.CONSUME_HUNGER.getAsBoolean() && !player.isCreative()) {
+            if (!Config.CONSUME_HUNGER.get() && !player.isCreative()) {
                 showHungerProtectionEffect(player);
             }
         }
@@ -1456,8 +1491,8 @@ public final class ChainEvents {
     }
 
     private static double currentTps(ServerLevel level) {
-        long nanos = level.getServer().getAverageTickTimeNanos();
-        return nanos <= 0L ? 20.0D : Math.min(20.0D, 1_000_000_000.0D / nanos);
+        float millis = level.getServer().getAverageTickTime();
+        return millis <= 0.0F ? 20.0D : Math.min(20.0D, 1000.0D / millis);
     }
 
     private static final class SearchNode {
