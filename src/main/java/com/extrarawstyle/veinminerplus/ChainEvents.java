@@ -93,14 +93,19 @@ public final class ChainEvents {
             ResourceLocation.fromNamespaceAndPath("c", "ores"));
     private static final List<BlockPos> NORMAL_OFFSETS = createNormalOffsets();
     private static final Map<String, List<BlockPos>> BLAST_OFFSETS = new ConcurrentHashMap<>();
-    private static final Map<Integer, List<ChunkOffset>> SPARSE_CHUNK_OFFSETS = new ConcurrentHashMap<>();
+    private static final Map<String, List<ChunkOffset>> SPARSE_CHUNK_OFFSETS = new ConcurrentHashMap<>();
     // Pure memoisation of oreFamilyKey; bounded by the size of the block registry.
     private static final Map<Block, String> ORE_FAMILY_KEYS = new HashMap<>();
     // Cache for isOre checks; bounded by the size of the block registry.
     private static final Map<Block, Boolean> ORE_CACHE = new HashMap<>();
     // Persistent cache for chunk scan results (LRU with 512 entry limit, manually managed)
     private static final Map<Long, List<BlockPos>> PERSISTENT_CHUNK_SCAN_CACHE
-            = Collections.synchronizedMap(new HashMap<Long, List<BlockPos>>(512));
+            = Collections.synchronizedMap(new LinkedHashMap<Long, List<BlockPos>>(512, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Long, List<BlockPos>> eldest) {
+                    return size() > 512;
+                }
+            });
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
@@ -279,8 +284,7 @@ public final class ChainEvents {
         Direction face = resolveBreakFace(player, target);
         DropBuffer drops = new DropBuffer();
         PENDING_DROPS.put(player.getUUID(), drops);
-        PENDING_JOBS.add(player.getUUID());
-        PENDING_JOBS.remove(player.getUUID());
+        // ✅ 移除无效操作：立即添加又删除 PENDING_JOBS 没有意义
         HungerStart hungerStart = HUNGER_STARTS.remove(player.getUUID());
         HungerSnapshot hungerBefore = hungerStart != null && hungerStart.pos().equals(target)
                 ? hungerStart.snapshot()
@@ -363,6 +367,12 @@ public final class ChainEvents {
         } else {
             HELD_KEYS.remove(serverPlayer.getUUID());
             HUNGER_STARTS.remove(serverPlayer.getUUID());
+
+            // ✅ 立即清除进度显示，无需等待下一个 tick
+            ChainJob activeJob = ACTIVE_JOBS.get(serverPlayer.getUUID());
+            if (activeJob != null) {
+                serverPlayer.displayClientMessage(Component.empty(), true);
+            }
         }
     }
 
@@ -682,22 +692,36 @@ public final class ChainEvents {
     /**
      * Chunk offsets for sparse blast searches, ordered from the centre chunk
      * outwards so the closest ore is found first.
+     *
+     * 性能优化：根据距离类型分别缓存和排序，确保排序与过滤算法一致
      */
-    private static List<ChunkOffset> sparseChunkOffsets(int distance) {
+    private static List<ChunkOffset> sparseChunkOffsets(int distance, boolean manhattan) {
         int radius = (distance >> 4) + 1;
-        return SPARSE_CHUNK_OFFSETS.computeIfAbsent(radius, ChainEvents::createSparseChunkOffsets);
+        String cacheKey = radius + (manhattan ? ":m" : ":s");
+        return SPARSE_CHUNK_OFFSETS.computeIfAbsent(cacheKey, k -> createSparseChunkOffsets(radius, manhattan));
     }
 
-    private static List<ChunkOffset> createSparseChunkOffsets(int radius) {
+    private static List<ChunkOffset> createSparseChunkOffsets(int radius, boolean manhattan) {
         List<ChunkOffset> offsets = new ArrayList<>((2 * radius + 1) * (2 * radius + 1));
         for (int x = -radius; x <= radius; x++) {
             for (int z = -radius; z <= radius; z++) {
                 offsets.add(new ChunkOffset(x, z));
             }
         }
-        offsets.sort(Comparator
-                .comparingInt((ChunkOffset offset) -> Math.max(Math.abs(offset.x()), Math.abs(offset.z())))
-                .thenComparingInt(offset -> offset.x() * offset.x() + offset.z() * offset.z()));
+
+        // 根据距离类型使用相应的排序算法
+        if (manhattan) {
+            // 曼哈顿距离排序：|x| + |z|
+            offsets.sort(Comparator
+                    .comparingInt((ChunkOffset offset) -> Math.abs(offset.x()) + Math.abs(offset.z()))
+                    .thenComparingInt(offset -> Math.max(Math.abs(offset.x()), Math.abs(offset.z()))));
+        } else {
+            // 球形距离排序：x² + z²
+            offsets.sort(Comparator
+                    .comparingInt((ChunkOffset offset) -> offset.x() * offset.x() + offset.z() * offset.z())
+                    .thenComparingInt(offset -> Math.max(Math.abs(offset.x()), Math.abs(offset.z()))));
+        }
+
         return Collections.unmodifiableList(offsets);
     }
 
@@ -971,7 +995,7 @@ public final class ChainEvents {
                     : mode.isBlast() && !sparseBlast
                             ? blastOffsets(blastDistance, blastManhattan)
                             : NORMAL_OFFSETS;
-            this.sparseScanOffsets = sparseChunkOffsets(blastDistance);
+            this.sparseScanOffsets = sparseChunkOffsets(blastDistance, blastManhattan);
             this.sparseTargets = new PriorityQueue<>(Comparator
                     .comparingLong((BlockPos pos) -> squaredDistance(origin, pos))
                     .thenComparingInt(BlockPos::getY)
@@ -1135,13 +1159,11 @@ public final class ChainEvents {
             UUID playerId = player.getUUID();
             boolean heldKey = HELD_KEYS.contains(playerId);
 
-            while (breaks < breakLimit && brokenCount < totalLimit && heldKey
-                    && isToolSlotUnchanged()) {
-                scanBudget = fillSparseTargets(scanBudget);
-                if (sparseTargets.isEmpty()) {
-                    break;
-                }
+            // ✅ 修复：先用完扫描预算填充目标队列，避免过早退出
+            scanBudget = fillSparseTargets(scanBudget);
 
+            while (breaks < breakLimit && brokenCount < totalLimit && heldKey
+                    && isToolSlotUnchanged() && !sparseTargets.isEmpty()) {
                 BlockPos candidate = sparseTargets.poll();
                 BlockState state = getBlockStateForSearch(level, candidate, loadedChunks);
                 String rejection = eligibilityFailure(level, player, candidate, state, targetBlock, mode, whitelist);
@@ -1157,6 +1179,11 @@ public final class ChainEvents {
                         breaks++;
                         sparseCenters.addLast(candidate);
                     }
+                }
+
+                // ✅ 破坏方块后尝试填充更多目标（如果扫描预算还有剩余）
+                if (sparseTargets.isEmpty() && scanBudget > 0) {
+                    scanBudget = fillSparseTargets(scanBudget);
                 }
             }
 
@@ -1227,14 +1254,33 @@ public final class ChainEvents {
             // ✅ 优化2：检查持久化缓存（第二次及以后的相同区块）
             List<BlockPos> cachedMatches = PERSISTENT_CHUNK_SCAN_CACHE.get(key);
             if (cachedMatches != null) {
+                int added = 0;
+                int alreadyExamined = 0;
+                int outOfRange = 0;
                 for (BlockPos pos : cachedMatches) {
-                    if (withinBlastDistance(center, pos, blastDistance, blastManhattan) && examined.add(pos)) {
-                        if (mode == ChainMode.BLAST_SAME) {
-                            sawSameTarget = true;
-                        }
-                        sparseTargets.add(pos);
+                    if (!withinBlastDistance(center, pos, blastDistance, blastManhattan)) {
+                        outOfRange++;
+                        continue;
                     }
+                    if (!examined.add(pos)) {
+                        alreadyExamined++;
+                        continue;
+                    }
+                    // ⚠️ 验证缓存的方块是否仍然有效（可能已被破坏）
+                    BlockState cachedState = getBlockStateForSearch(level, pos, loadedChunks);
+                    if (!matchesSparseState(cachedState)) {
+                        debug("stale cache entry mode={} chunk=({}, {}) pos={} expected={} actual={}",
+                                mode, chunkX, chunkZ, pos, blockId(targetBlock), blockId(cachedState.getBlock()));
+                        continue;
+                    }
+                    if (mode == ChainMode.BLAST_SAME) {
+                        sawSameTarget = true;
+                    }
+                    sparseTargets.add(pos);
+                    added++;
                 }
+                debug("cache hit mode={} chunk=({}, {}) total={} added={} examined={} outOfRange={}",
+                        mode, chunkX, chunkZ, cachedMatches.size(), added, alreadyExamined, outOfRange);
                 return false;  // 不是第一次扫描
             }
 
@@ -1253,15 +1299,7 @@ public final class ChainEvents {
                 chunk.findBlocks(this::matchesSparseState,
                         (pos, state) -> positions.add(pos.immutable()));
                 sparseChunkMatches.put(key, matches);
-                // ✅ 优化3：保存到持久化缓存（手工管理大小，最多512个）
-                if (PERSISTENT_CHUNK_SCAN_CACHE.size() >= 512) {
-                    // 清除一半以释放空间
-                    int toRemove = 256;
-                    for (Long k : PERSISTENT_CHUNK_SCAN_CACHE.keySet()) {
-                        if (toRemove-- <= 0) break;
-                        PERSISTENT_CHUNK_SCAN_CACHE.remove(k);
-                    }
-                }
+                // ✅ 优化3：保存到持久化缓存（LinkedHashMap 自动管理 LRU）
                 PERSISTENT_CHUNK_SCAN_CACHE.put(key, matches);
                 firstScan = true;
                 sparseChunksScanned++;
@@ -1283,22 +1321,33 @@ public final class ChainEvents {
             return firstScan;
         }
 
-        // ✅ 新增优化方法：快速区块距离检查
+        /**
+         * 快速区块距离检查（修复版）
+         * 计算区块内最近点到中心的距离，避免误排除包含有效方块的区块
+         */
         private boolean isChunkWithinDistance(BlockPos center, int chunkX, int chunkZ,
                                               int distance, boolean manhattan) {
-            int centerChunkX = center.getX() >> 4;
-            int centerChunkZ = center.getZ() >> 4;
+            // 计算区块的世界坐标边界
+            int chunkMinX = chunkX << 4;
+            int chunkMinZ = chunkZ << 4;
+            int chunkMaxX = chunkMinX + 15;
+            int chunkMaxZ = chunkMinZ + 15;
+
+            // 找到区块内最接近center的点（clamp到区块边界）
+            int closestX = Math.max(chunkMinX, Math.min(center.getX(), chunkMaxX));
+            int closestZ = Math.max(chunkMinZ, Math.min(center.getZ(), chunkMaxZ));
 
             if (manhattan) {
-                int chunkDist = Math.abs(chunkX - centerChunkX)
-                              + Math.abs(chunkZ - centerChunkZ);
-                return chunkDist * 16 <= distance;
+                // 曼哈顿距离：|dx| + |dz|
+                int dist = Math.abs(center.getX() - closestX) + Math.abs(center.getZ() - closestZ);
+                return dist <= distance;
+            } else {
+                // 球形距离：sqrt(dx² + dz²)
+                int dx = center.getX() - closestX;
+                int dz = center.getZ() - closestZ;
+                long distSq = (long) dx * dx + (long) dz * dz;
+                return distSq <= (long) distance * distance;
             }
-
-            int dx = Math.abs(chunkX - centerChunkX);
-            int dz = Math.abs(chunkZ - centerChunkZ);
-            long dist = (long) dx * dx + (long) dz * dz;
-            return dist * 256 <= (long) distance * distance;
         }
 
         private void adjustBlastRadiusForTps() {
@@ -1314,8 +1363,9 @@ public final class ChainEvents {
                 if (!sparseBlast) {
                     graphOffsets = blastOffsets(blastDistance, blastManhattan);
                 }
-                sparseScanOffsets = sparseChunkOffsets(blastDistance);
-                sparseTargets.clear();
+                sparseScanOffsets = sparseChunkOffsets(blastDistance, blastManhattan);
+                // 性能优化：不清空已找到的目标，只停止扫描新区块
+                // sparseTargets.clear();  // 移除这行，避免丢失已找到的方块
                 NetworkHandler.sendBlastRadiusReduced(player, tps, oldDistance, blastDistance);
             } else {
                 player.displayClientMessage(Component.translatable("message.veinminerplus.blast_radius_too_large",
@@ -1343,6 +1393,10 @@ public final class ChainEvents {
             debug("job finish player={} mode={} target={} broken={} sawSame={} chunksScanned={} matchedPositions={} exhausted={}",
                     player.getGameProfile().getName(), mode, blockId(targetBlock), brokenCount, sawSameTarget,
                     sparseChunksScanned, sparseMatchedPositions, searchExhausted());
+
+            // ✅ 清除进度显示，避免松开按键后数字残留
+            player.displayClientMessage(Component.empty(), true);
+
             drops.flush(player.serverLevel(), player);
             ACTIVE_JOBS.remove(player.getUUID(), this);
             HungerProtection protection = HUNGER_PROTECTIONS.get(player.getUUID());
