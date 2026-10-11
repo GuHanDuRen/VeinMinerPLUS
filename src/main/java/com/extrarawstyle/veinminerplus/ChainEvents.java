@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +88,16 @@ public final class ChainEvents {
         return prefixes;
     }
 
+    private static Map<Long, List<BlockPos>> createLRUCache() {
+        return Collections.synchronizedMap(new LinkedHashMap<Long, List<BlockPos>>(512, 0.75f, true) {
+            private static final long serialVersionUID = 1L;
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Long, List<BlockPos>> eldest) {
+                return size() > 512;
+            }
+        });
+    }
+
     private static final TagKey<Block> ORE_BLOCKS = TagKey.create(Registries.BLOCK,
             ResourceLocation.withDefaultNamespace("ores"));
     private static final TagKey<Block> COMMON_ORE_BLOCKS = TagKey.create(Registries.BLOCK,
@@ -98,14 +109,8 @@ public final class ChainEvents {
     private static final Map<Block, String> ORE_FAMILY_KEYS = new HashMap<>();
     // Cache for isOre checks; bounded by the size of the block registry.
     private static final Map<Block, Boolean> ORE_CACHE = new HashMap<>();
-    // Persistent cache for chunk scan results (LRU with 512 entry limit, manually managed)
-    private static final Map<Long, List<BlockPos>> PERSISTENT_CHUNK_SCAN_CACHE
-            = Collections.synchronizedMap(new LinkedHashMap<Long, List<BlockPos>>(512, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<Long, List<BlockPos>> eldest) {
-                    return size() > 512;
-                }
-            });
+    // Persistent cache for chunk scan results (LRU with 512 entry limit, auto-managed)
+    private static final Map<Long, List<BlockPos>> PERSISTENT_CHUNK_SCAN_CACHE = createLRUCache();
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
