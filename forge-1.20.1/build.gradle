@@ -14,9 +14,26 @@ base {
 
 repositories {
     maven { url = 'https://maven.blamejared.com' }
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeModule('maven.modrinth', 'applied-energistics-2-wireless-terminals')
+            includeModule('maven.modrinth', 'ae2')
+        }
+    }
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+sourceSets {
+    startup {
+        compileClasspath += sourceSets.main.compileClasspath
+    }
+    startupTest {
+        compileClasspath += sourceSets.startup.output + sourceSets.startup.compileClasspath
+        runtimeClasspath = output + sourceSets.startup.output + sourceSets.main.runtimeClasspath
+    }
+}
 
 minecraft {
     mappings channel: 'official', version: minecraft_version
@@ -48,6 +65,13 @@ dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
     compileOnly "mezz.jei:jei-1.20.1-common-api:15.20.0.130"
     compileOnly "mezz.jei:jei-1.20.1-forge-api:15.20.0.130"
+    compileOnly(fg.deobf('maven.modrinth:applied-energistics-2-wireless-terminals:15.3.3-forge')) {
+        transitive = false
+    }
+    compileOnly(fg.deobf('maven.modrinth:ae2:15.4.11')) {
+        transitive = false
+    }
+    startupCompileOnly "net.minecraftforge:fmlearlydisplay:${minecraft_version}-${forge_version}"
 }
 
 tasks.named('processResources', ProcessResources).configure {
@@ -69,6 +93,8 @@ tasks.named('processResources', ProcessResources).configure {
 }
 
 tasks.named('jar', Jar).configure {
+    archiveClassifier = 'mod'
+    destinationDirectory = layout.buildDirectory.dir('startup')
     manifest {
         attributes([
                 'Specification-Title': mod_id,
@@ -76,10 +102,51 @@ tasks.named('jar', Jar).configure {
                 'Specification-Version': '1',
                 'Implementation-Title': project.name,
                 'Implementation-Version': project.jar.archiveVersion,
-                'Implementation-Vendor': mod_authors
+                'Implementation-Vendor': mod_authors,
+                'MixinConfigs': 'veinminerplus.mixins.json'
         ])
     }
     finalizedBy 'reobfJar'
+}
+
+def startupJar = tasks.register('startupJar', Jar) {
+    dependsOn 'reobfJar'
+    from sourceSets.startup.output
+    into('META-INF/veinminerplus') {
+        from tasks.named('jar')
+        rename { 'veinminerplus-mod.jar' }
+    }
+    archiveFileName = "${base.archivesName.get()}-${project.version}.jar"
+    destinationDirectory = layout.buildDirectory.dir('libs')
+    manifest {
+        attributes 'Automatic-Module-Name': 'veinminerplus_startup'
+    }
+}
+
+tasks.named('assemble').configure {
+    dependsOn startupJar
+}
+
+def startupAnimationCheck = tasks.register('startupAnimationCheck', JavaExec) {
+    classpath = sourceSets.startupTest.runtimeClasspath
+    mainClass = 'com.extrarawstyle.veinminerplus.startup.StartupAnimationCheck'
+    workingDir layout.buildDirectory
+    jvmArgs '-Djava.awt.headless=true'
+}
+
+def packagedStartupCheck = tasks.register('packagedStartupCheck', JavaExec) {
+    dependsOn startupJar
+    classpath = sourceSets.startupTest.runtimeClasspath
+    mainClass = 'com.extrarawstyle.veinminerplus.startup.PackagedStartupCheck'
+    workingDir layout.buildDirectory
+    jvmArgs '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED'
+    argumentProviders.add({
+        [startupJar.get().archiveFile.get().asFile.absolutePath]
+    } as CommandLineArgumentProvider)
+}
+
+tasks.named('check').configure {
+    dependsOn startupAnimationCheck, packagedStartupCheck
 }
 
 tasks.withType(JavaCompile).configureEach {

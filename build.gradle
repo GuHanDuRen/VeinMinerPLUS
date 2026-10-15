@@ -27,9 +27,31 @@ sourceSets.main.resources {
     exclude("src/generated/**/.cache") // datagen cache files
 }
 
+sourceSets {
+    startup {
+        compileClasspath += sourceSets.main.compileClasspath
+    }
+    startupTest {
+        compileClasspath += sourceSets.startup.output + sourceSets.startup.compileClasspath
+        runtimeClasspath = output + sourceSets.startup.output + sourceSets.main.runtimeClasspath
+    }
+    compatibilityTest {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath = output + sourceSets.main.runtimeClasspath
+    }
+}
+
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
     maven { url = 'https://maven.blamejared.com' }
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
+    maven {
+        url = 'https://modmaven.dev'
+        content { includeGroup 'de.mari_023' }
+    }
 }
 
 base {
@@ -105,6 +127,9 @@ neoForge {
         "${mod_id}" {
             sourceSet(sourceSets.main)
         }
+        veinminerplus_startup {
+            sourceSet(sourceSets.startup)
+        }
     }
 }
 
@@ -121,6 +146,9 @@ dependencies {
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     compileOnly "mezz.jei:jei-${minecraft_version}-common-api:19.51.0.418"
     compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:19.51.0.418"
+    compileOnly('maven.modrinth:ae2:19.2.18') { transitive = false }
+    compileOnly('de.mari_023:ae2wtlib:19.5.1') { transitive = false }
+    compileOnly('de.mari_023:ae2wtlib_api:19.5.1') { transitive = false }
     // We add the full version to localRuntime, not runtimeOnly, so that we do not publish a dependency on it
     // localRuntime "mezz.jei:jei-${mc_version}-neoforge:${jei_version}"
 
@@ -139,6 +167,68 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 }
+
+dependencies {
+    startupCompileOnly "net.neoforged.fancymodloader:earlydisplay:4.0.42"
+}
+
+// Keep early loading services outside the game module while distributing one JAR.
+tasks.named('jar', Jar).configure {
+    archiveClassifier = 'mod'
+    destinationDirectory = layout.buildDirectory.dir('startup')
+}
+
+var startupJar = tasks.register('startupJar', Jar) {
+    from sourceSets.startup.output
+    into('META-INF/veinminerplus') {
+        from tasks.named('jar')
+        rename { 'veinminerplus-mod.jar' }
+    }
+    archiveFileName = "${base.archivesName.get()}-${project.version}.jar"
+    destinationDirectory = layout.buildDirectory.dir('libs')
+    manifest {
+        attributes 'Automatic-Module-Name': 'veinminerplus_startup'
+    }
+}
+
+tasks.named('assemble').configure {
+    dependsOn startupJar
+}
+
+var startupAnimationCheck = tasks.register('startupAnimationCheck', JavaExec) {
+    classpath = sourceSets.startupTest.runtimeClasspath
+    mainClass = 'com.extrarawstyle.veinminerplus.startup.StartupAnimationCheck'
+    jvmArgs '-Djava.awt.headless=true'
+}
+
+var packagedStartupJar = startupJar.flatMap { it.archiveFile }.map { it.asFile.absolutePath }
+var packagedStartupCheck = tasks.register('packagedStartupCheck', JavaExec) {
+    dependsOn startupJar
+    classpath = sourceSets.startupTest.runtimeClasspath
+    mainClass = 'com.extrarawstyle.veinminerplus.startup.PackagedStartupCheck'
+    jvmArgs '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED'
+    argumentProviders.add({ [packagedStartupJar.get()] } as CommandLineArgumentProvider)
+}
+
+tasks.named('check').configure {
+    dependsOn startupAnimationCheck, packagedStartupCheck
+}
+
+var compatibilityCheck = tasks.register('compatibilityCheck', JavaExec) {
+    classpath = sourceSets.compatibilityTest.runtimeClasspath
+    mainClass = 'com.extrarawstyle.veinminerplus.CompatibilityCheck'
+    workingDir layout.buildDirectory
+    jvmArgs '-Djava.awt.headless=true'
+}
+
+tasks.named('check').configure {
+    dependsOn compatibilityCheck
+}
+
+configurations.apiElements.outgoing.artifacts.clear()
+configurations.apiElements.outgoing.artifact(startupJar)
+configurations.runtimeElements.outgoing.artifacts.clear()
+configurations.runtimeElements.outgoing.artifact(startupJar)
 
 // This block of code expands all declared replace properties in the specified resource targets.
 // A missing property will result in an error. Properties are expanded using ${} Groovy notation.

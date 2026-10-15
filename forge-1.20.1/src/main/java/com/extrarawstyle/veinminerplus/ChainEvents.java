@@ -45,6 +45,7 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.capabilities.ForgeCapabilities;
 import net.minecraftforge.common.ForgeHooks;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.TagsUpdatedEvent;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
@@ -111,6 +112,7 @@ public final class ChainEvents {
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
+    private static final Set<UUID> AE_STORAGE_BYPASS = new HashSet<>();
     private static final Map<UUID, ChainJob> ACTIVE_JOBS = new HashMap<>();
     private static final Map<UUID, RightClickJob> ACTIVE_RIGHT_CLICK_JOBS = new HashMap<>();
     private static final Set<UUID> RIGHT_CLICK_GUARD = new HashSet<>();
@@ -124,6 +126,22 @@ public final class ChainEvents {
     // Cache the compiled whitelist matcher to avoid recreating it every search
     private static volatile WhitelistMatcher cachedWhitelistMatcher = null;
     private static volatile int cachedWhitelistVersion = -1;
+
+    static void invalidateChunkScanCache() {
+        PERSISTENT_CHUNK_SCAN_CACHE.clear();
+    }
+
+    @SubscribeEvent
+    public void onTagsUpdated(TagsUpdatedEvent event) {
+        invalidateChunkScanCache();
+    }
+
+    @SubscribeEvent
+    public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            NetworkHandler.sendBlacklistSync(player);
+        }
+    }
 
     @SubscribeEvent
     public void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
@@ -149,6 +167,7 @@ public final class ChainEvents {
         }
         PLAYER_MODES.remove(id);
         HELD_KEYS.remove(id);
+        AE_STORAGE_BYPASS.remove(id);
         PENDING_JOBS.remove(id);
         PENDING_DROP_ORIGINS.remove(id);
         LAST_BREAK_FACES.remove(id);
@@ -185,7 +204,7 @@ public final class ChainEvents {
         ServerLevel level = player.serverLevel();
         BlockPos origin = event.getPos().immutable();
         BlockState state = level.getBlockState(origin);
-        if (state.isAir() || !level.mayInteract(player, origin)) {
+        if (state.isAir() || Config.isBlockBlacklisted(state) || !level.mayInteract(player, origin)) {
             return;
         }
 
@@ -287,7 +306,7 @@ public final class ChainEvents {
         int toolSlot = player.getInventory().selected;
 
         Direction face = resolveBreakFace(player, target);
-        DropBuffer drops = new DropBuffer();
+        DropBuffer drops = new DropBuffer(AE_STORAGE_BYPASS.contains(player.getUUID()));
         PENDING_DROPS.put(player.getUUID(), drops);
         PENDING_DROP_ORIGINS.put(player.getUUID(), target);
         // ✅ 移除无效操作：立即添加又删除 PENDING_JOBS 没有意义
@@ -374,12 +393,24 @@ public final class ChainEvents {
         }
     }
 
-    static void setKeyHeld(Player player, boolean held) {
+    static void setKeyHeld(Player player, boolean held, boolean bypassAeStorage) {
         if (!(player instanceof ServerPlayer serverPlayer)) {
             return;
         }
 
-        debug("key state player={} held={}", serverPlayer.getGameProfile().getName(), held);
+        UUID id = serverPlayer.getUUID();
+        if (held && bypassAeStorage) {
+            AE_STORAGE_BYPASS.add(id);
+            ChainJob activeJob = ACTIVE_JOBS.get(id);
+            if (activeJob != null) {
+                activeJob.drops.bypassAeStorage = true;
+            }
+        } else {
+            AE_STORAGE_BYPASS.remove(id);
+        }
+
+        debug("key state player={} held={} bypassAeStorage={}", serverPlayer.getGameProfile().getName(), held,
+                bypassAeStorage);
         if (held) {
             HELD_KEYS.add(serverPlayer.getUUID());
         } else {
@@ -419,6 +450,9 @@ public final class ChainEvents {
         }
         if (state.isAir()) {
             return "air";
+        }
+        if (Config.isBlockBlacklisted(state)) {
+            return "blacklisted";
         }
         if (!level.mayInteract(player, pos)) {
             return "mayInteract=false";
@@ -799,6 +833,11 @@ public final class ChainEvents {
     private static final class DropBuffer {
         private final List<ItemStack> items = new ArrayList<>();
         private int experience;
+        private boolean bypassAeStorage;
+
+        private DropBuffer(boolean bypassAeStorage) {
+            this.bypassAeStorage = bypassAeStorage;
+        }
 
         private void add(ItemStack stack) {
             if (stack.isEmpty()) {
@@ -844,10 +883,22 @@ public final class ChainEvents {
             double x = player.getX();
             double y = player.getY();
             double z = player.getZ();
+            boolean markBypass = bypassAeStorage && Ae2DropStorage.hasMagnet(player);
             for (ItemStack stack : items) {
+                if (!bypassAeStorage) {
+                    Ae2DropStorage.insert(player, stack);
+                }
+                if (stack.isEmpty()) {
+                    continue;
+                }
                 ItemEntity item = new ItemEntity(level, x, y, z, stack);
                 item.setDefaultPickUpDelay();
                 item.setDeltaMovement(0.0D, 0.0D, 0.0D);
+                // ME routing is resolved above; pickup must not route the remaining items again.
+                item.getPersistentData().putBoolean("veinminerplusBypassAeStorage", true);
+                if (markBypass) {
+                    item.getPersistentData().putBoolean("PreventRemoteMovement", true);
+                }
                 level.addFreshEntity(item);
             }
             if (experience > 0) {
@@ -919,8 +970,11 @@ public final class ChainEvents {
                 checks++;
                 BlockPos candidate = node.position().offset(offset.getX(), offset.getY(), offset.getZ());
                 if (!level.isInWorldBounds(candidate) || !examined.add(candidate)
-                        || !level.mayInteract(player, candidate)
-                        || !level.getBlockState(candidate).is(targetBlock)) {
+                        || !level.mayInteract(player, candidate)) {
+                    continue;
+                }
+                BlockState candidateState = level.getBlockState(candidate);
+                if (!candidateState.is(targetBlock) || Config.isBlockBlacklisted(candidateState)) {
                     continue;
                 }
 
@@ -1567,7 +1621,7 @@ public final class ChainEvents {
      * Pre-compiled whitelist matcher for efficient block filtering.
      * Separates tags, exact matches, and wildcards to minimize repeated work.
      */
-    private static final class WhitelistMatcher {
+    static final class WhitelistMatcher {
         private final Set<String> whitelist;
         private final List<TagKey<Block>> tagRules;
         private final List<String> exactRules;
@@ -1610,6 +1664,10 @@ public final class ChainEvents {
             boolean result = matchesUncached(state, block);
             matchCache.put(block, result);
             return result;
+        }
+
+        boolean matchesLive(BlockState state) {
+            return tagRules.isEmpty() ? matches(state) : matchesUncached(state, state.getBlock());
         }
 
         private boolean matchesUncached(BlockState state, Block block) {

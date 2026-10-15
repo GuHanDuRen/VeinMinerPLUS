@@ -46,6 +46,7 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.event.EventHooks;
+import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
@@ -114,6 +115,7 @@ public final class ChainEvents {
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<>();
     private static final Set<UUID> HELD_KEYS = new HashSet<>();
+    private static final Set<UUID> AE_STORAGE_BYPASS = new HashSet<>();
     private static final Map<UUID, ChainJob> ACTIVE_JOBS = new HashMap<>();
     private static final Map<UUID, RightClickJob> ACTIVE_RIGHT_CLICK_JOBS = new HashMap<>();
     private static final Set<UUID> RIGHT_CLICK_GUARD = new HashSet<>();
@@ -125,6 +127,20 @@ public final class ChainEvents {
     // Cache the compiled whitelist matcher to avoid recreating it every search
     private static volatile WhitelistMatcher cachedWhitelistMatcher = null;
     private static volatile int cachedWhitelistVersion = -1;
+
+    @SubscribeEvent
+    public void onTagsUpdated(TagsUpdatedEvent event) {
+        if (event.shouldUpdateStaticData()) {
+            invalidateChunkScanCache();
+        }
+    }
+
+    @SubscribeEvent
+    public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            NetworkHandler.syncBlacklist(player);
+        }
+    }
 
     @SubscribeEvent
     public void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
@@ -150,6 +166,7 @@ public final class ChainEvents {
         }
         PLAYER_MODES.remove(id);
         HELD_KEYS.remove(id);
+        AE_STORAGE_BYPASS.remove(id);
         PENDING_JOBS.remove(id);
         LAST_BREAK_FACES.remove(id);
         HUNGER_STARTS.remove(id);
@@ -185,7 +202,7 @@ public final class ChainEvents {
         ServerLevel level = player.serverLevel();
         BlockPos origin = event.getPos().immutable();
         BlockState state = level.getBlockState(origin);
-        if (state.isAir() || !level.mayInteract(player, origin)) {
+        if (state.isAir() || Config.isBlockBlacklisted(state) || !level.mayInteract(player, origin)) {
             return;
         }
 
@@ -287,7 +304,7 @@ public final class ChainEvents {
         int toolSlot = player.getInventory().selected;
 
         Direction face = resolveBreakFace(player, target);
-        DropBuffer drops = new DropBuffer();
+        DropBuffer drops = new DropBuffer(AE_STORAGE_BYPASS.contains(player.getUUID()));
         PENDING_DROPS.put(player.getUUID(), drops);
         // ✅ 移除无效操作：立即添加又删除 PENDING_JOBS 没有意义
         HungerStart hungerStart = HUNGER_STARTS.remove(player.getUUID());
@@ -361,12 +378,26 @@ public final class ChainEvents {
         }
     }
 
-    static void setKeyHeld(Player player, boolean held) {
+    static void setKeyHeld(Player player, boolean held, boolean bypassAeStorage) {
         if (!(player instanceof ServerPlayer serverPlayer)) {
             return;
         }
 
         debug("key state player={} held={}", serverPlayer.getGameProfile().getName(), held);
+        UUID id = serverPlayer.getUUID();
+        if (held && bypassAeStorage) {
+            AE_STORAGE_BYPASS.add(id);
+            ChainJob activeJob = ACTIVE_JOBS.get(id);
+            if (activeJob != null) {
+                activeJob.drops.bypassAeStorage = true;
+            }
+            DropBuffer pendingDrops = PENDING_DROPS.get(id);
+            if (pendingDrops != null) {
+                pendingDrops.bypassAeStorage = true;
+            }
+        } else {
+            AE_STORAGE_BYPASS.remove(id);
+        }
         if (held) {
             HELD_KEYS.add(serverPlayer.getUUID());
         } else {
@@ -389,6 +420,10 @@ public final class ChainEvents {
         }
     }
 
+    static void invalidateChunkScanCache() {
+        PERSISTENT_CHUNK_SCAN_CACHE.clear();
+    }
+
     private static boolean isEligible(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
             Block targetBlock, ChainMode mode) {
         return isEligible(level, player, pos, state, targetBlock, mode, configuredWhitelist());
@@ -401,6 +436,9 @@ public final class ChainEvents {
 
     private static String eligibilityFailure(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state,
             Block targetBlock, ChainMode mode, Set<String> whitelist) {
+        if (Config.isBlockBlacklisted(state)) {
+            return "blacklisted";
+        }
         if (mode == ChainMode.XRAY) {
             return "mode unavailable";
         }
@@ -771,7 +809,12 @@ public final class ChainEvents {
 
     private static final class DropBuffer {
         private final List<ItemStack> items = new ArrayList<>();
+        private boolean bypassAeStorage;
         private int experience;
+
+        private DropBuffer(boolean bypassAeStorage) {
+            this.bypassAeStorage = bypassAeStorage;
+        }
 
         private void add(ItemStack stack) {
             if (stack.isEmpty()) {
@@ -817,8 +860,20 @@ public final class ChainEvents {
             double x = player.getX();
             double y = player.getY();
             double z = player.getZ();
+            if (!bypassAeStorage) {
+                Ae2DropStorage.store(player, items);
+            }
+            boolean protectFromAeMagnet = bypassAeStorage && Ae2DropStorage.hasMagnet(player);
             for (ItemStack stack : items) {
+                if (stack.isEmpty()) {
+                    continue;
+                }
                 ItemEntity item = new ItemEntity(level, x, y, z, stack);
+                // WTLib's restock pickup can otherwise bypass the terminal's pickup-to-ME setting.
+                item.getPersistentData().putBoolean("veinminerplusBypassAeStorage", true);
+                if (protectFromAeMagnet) {
+                    item.getPersistentData().putBoolean("PreventRemoteMovement", true);
+                }
                 item.setDefaultPickUpDelay();
                 item.setDeltaMovement(0.0D, 0.0D, 0.0D);
                 level.addFreshEntity(item);
@@ -892,8 +947,11 @@ public final class ChainEvents {
                 checks++;
                 BlockPos candidate = node.position().offset(offset.getX(), offset.getY(), offset.getZ());
                 if (!level.isInWorldBounds(candidate) || !examined.add(candidate)
-                        || !level.mayInteract(player, candidate)
-                        || !level.getBlockState(candidate).is(targetBlock)) {
+                        || !level.mayInteract(player, candidate)) {
+                    continue;
+                }
+                BlockState state = level.getBlockState(candidate);
+                if (!state.is(targetBlock) || Config.isBlockBlacklisted(state)) {
                     continue;
                 }
 
@@ -1379,6 +1437,9 @@ public final class ChainEvents {
         }
 
         private boolean matchesSparseState(BlockState state) {
+            if (Config.isBlockBlacklisted(state)) {
+                return false;
+            }
             boolean modeMatches = switch (mode) {
                 case BLAST_ANY -> !state.isAir();
                 case BLAST_ORES -> isOre(state);
@@ -1537,7 +1598,7 @@ public final class ChainEvents {
      * Pre-compiled whitelist matcher for efficient block filtering.
      * Separates tags, exact matches, and wildcards to minimize repeated work.
      */
-    private static final class WhitelistMatcher {
+    static final class WhitelistMatcher {
         private final Set<String> whitelist;
         private final List<TagKey<Block>> tagRules;
         private final List<String> exactRules;
@@ -1580,6 +1641,10 @@ public final class ChainEvents {
             boolean result = matchesUncached(state, block);
             matchCache.put(block, result);
             return result;
+        }
+
+        boolean matchesLive(BlockState state) {
+            return tagRules.isEmpty() ? matches(state) : matchesUncached(state, state.getBlock());
         }
 
         private boolean matchesUncached(BlockState state, Block block) {

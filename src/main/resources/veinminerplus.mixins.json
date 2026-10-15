@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.extrarawstyle.veinminerplus.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "Ae2MagnetPickupMixin",
+    "ItemEntityMergeMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

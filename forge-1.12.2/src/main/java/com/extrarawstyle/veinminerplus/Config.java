@@ -26,6 +26,7 @@ public final class Config {
     public static final boolean DEFAULT_DEBUG_LOGGING = false;
     public static final int DEFAULT_MODE_ORDINAL = 0;
     public static final List<String> DEFAULT_BLOCK_WHITELIST = Collections.singletonList("*ore");
+    public static final List<String> DEFAULT_BLOCK_BLACKLIST = Collections.emptyList();
     public static final int MAX_WHITELIST_ENTRIES = 256;
     public static final int MAX_WHITELIST_ENTRY_LENGTH = 128;
 
@@ -44,6 +45,13 @@ public final class Config {
     public static boolean consumeHunger = DEFAULT_CONSUME_HUNGER;
     public static boolean debugLogging = DEFAULT_DEBUG_LOGGING;
     public static List<String> blockWhitelist = new ArrayList<String>(DEFAULT_BLOCK_WHITELIST);
+    public static List<String> blockBlacklist = new ArrayList<String>(DEFAULT_BLOCK_BLACKLIST);
+    private static List<String> cachedBlacklistRules = Collections.emptyList();
+    private static ChainEvents.WhitelistMatcher blacklistMatcher =
+            new ChainEvents.WhitelistMatcher(Collections.<String>emptySet());
+    private static ChainEvents.WhitelistMatcher clientBlacklistMatcher =
+            new ChainEvents.WhitelistMatcher(Collections.<String>emptySet());
+    private static List<String> clientBlacklistRules = Collections.emptyList();
 
     private Config() {
     }
@@ -89,9 +97,15 @@ public final class Config {
                 DEFAULT_BLOCK_WHITELIST.toArray(new String[DEFAULT_BLOCK_WHITELIST.size()]),
                 "Additional targets for the all-ores blast mode (BLAST_ORES): block IDs, * wildcards, or ore:<OreDictionary name>. Default: *ore.");
         blockWhitelist = new ArrayList<String>(normalizeWhitelist(Arrays.asList(values)));
+        String[] blacklistValues = config.getStringList("blockBlacklist", category,
+                DEFAULT_BLOCK_BLACKLIST.toArray(new String[DEFAULT_BLOCK_BLACKLIST.size()]),
+                "Excluded targets for every chain mode. Block IDs, * wildcards, or ore:<OreDictionary name>. Blacklist wins over whitelist.");
+        blockBlacklist = new ArrayList<String>(normalizeWhitelist(Arrays.asList(blacklistValues)));
+        updateBlacklistMatcher(false);
         if (config.hasChanged()) {
             config.save();
         }
+        NetworkHandler.broadcastBlacklist();
     }
 
     public static void save() {
@@ -114,7 +128,12 @@ public final class Config {
         config.get(category, "blockWhitelist",
                 DEFAULT_BLOCK_WHITELIST.toArray(new String[DEFAULT_BLOCK_WHITELIST.size()]))
                 .set(blockWhitelist.toArray(new String[blockWhitelist.size()]));
+        config.get(category, "blockBlacklist",
+                DEFAULT_BLOCK_BLACKLIST.toArray(new String[DEFAULT_BLOCK_BLACKLIST.size()]))
+                .set(blockBlacklist.toArray(new String[blockBlacklist.size()]));
+        updateBlacklistMatcher(false);
         config.save();
+        NetworkHandler.broadcastBlacklist();
     }
 
     static List<String> parseWhitelistText(String text) {
@@ -146,6 +165,48 @@ public final class Config {
 
     static String whitelistText() {
         return joinRules(effectiveWhitelist(blockWhitelist));
+    }
+
+    static String blacklistText() {
+        return joinRules(normalizeWhitelist(blockBlacklist));
+    }
+
+    static boolean isBlockBlacklisted(net.minecraft.block.state.IBlockState state) {
+        updateBlacklistMatcher(false);
+        return blacklistMatcher.matches(state);
+    }
+
+    private static void updateBlacklistMatcher(boolean force) {
+        if (force || !cachedBlacklistRules.equals(blockBlacklist)) {
+            cachedBlacklistRules = new ArrayList<String>(blockBlacklist);
+            blacklistMatcher = new ChainEvents.WhitelistMatcher(
+                    new LinkedHashSet<String>(normalizeWhitelist(blockBlacklist)));
+            ChainEvents.invalidateChunkScanCache();
+        }
+    }
+
+    static void onOreDictionaryChanged() {
+        updateBlacklistMatcher(true);
+        clientBlacklistMatcher = new ChainEvents.WhitelistMatcher(
+                new LinkedHashSet<String>(clientBlacklistRules));
+    }
+
+    static boolean isClientBlockBlacklisted(net.minecraft.block.state.IBlockState state) {
+        return clientBlacklistMatcher.matches(state);
+    }
+
+    static void setClientBlacklist(String text) {
+        List<String> rules = parseWhitelistText(text);
+        if (clientBlacklistRules.equals(rules)) {
+            return;
+        }
+        clientBlacklistRules = rules;
+        clientBlacklistMatcher = new ChainEvents.WhitelistMatcher(
+                new LinkedHashSet<String>(rules));
+    }
+
+    static void resetClientBlacklist() {
+        setClientBlacklist("");
     }
 
     static List<String> effectiveWhitelist(Iterable<?> values) {
@@ -192,7 +253,8 @@ public final class Config {
         }
         try {
             ResourceLocation location = new ResourceLocation(id);
-            return location.toString();
+            String normalized = location.toString();
+            return normalized.length() <= MAX_WHITELIST_ENTRY_LENGTH ? normalized : null;
         } catch (RuntimeException ignored) {
             return null;
         }

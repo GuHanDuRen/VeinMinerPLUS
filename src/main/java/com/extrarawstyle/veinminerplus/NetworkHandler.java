@@ -10,8 +10,10 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "6";
+    private static final String PROTOCOL_VERSION = "7";
     static final int MAX_WHITELIST_TEXT_LENGTH = 4096;
+    static final int MAX_CONFIG_SNAPSHOT_TEXT_LENGTH =
+            Config.MAX_WHITELIST_ENTRIES * (Config.MAX_WHITELIST_ENTRY_LENGTH + 1);
 
     private NetworkHandler() {
     }
@@ -19,7 +21,8 @@ public final class NetworkHandler {
     public static void register(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar(PROTOCOL_VERSION);
         registrar.playToServer(KeyStatePayload.TYPE, KeyStatePayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() -> ChainEvents.setKeyHeld(context.player(), payload.held())));
+                (payload, context) -> context.enqueueWork(() -> ChainEvents.setKeyHeld(
+                        context.player(), payload.held(), payload.bypassAeStorage())));
         registrar.playToServer(ModeChangePayload.TYPE, ModeChangePayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> ChainEvents.setMode(context.player(), payload.mode())));
         registrar.playToServer(ConfigRequestPayload.TYPE, ConfigRequestPayload.STREAM_CODEC,
@@ -35,6 +38,9 @@ public final class NetworkHandler {
                 }));
         registrar.playToClient(ConfigSnapshotPayload.TYPE, ConfigSnapshotPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> VeinMinerPlusClient.openConfigScreen(payload)));
+        registrar.playToClient(BlacklistSyncPayload.TYPE, BlacklistSyncPayload.STREAM_CODEC,
+                (payload, context) -> context.enqueueWork(() -> VeinMinerPlusClient.syncBlacklist(
+                        payload.blockBlacklist())));
         registrar.playToClient(BlastRadiusReducedPayload.TYPE, BlastRadiusReducedPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> VeinMinerPlusClient.showBlastRadiusReduced(
                         payload.tps(), payload.oldDistance(), payload.newDistance())));
@@ -46,8 +52,8 @@ public final class NetworkHandler {
                 }));
     }
 
-    static void sendKeyState(boolean held) {
-        PacketDistributor.sendToServer(new KeyStatePayload(held));
+    static void sendKeyState(boolean held, boolean bypassAeStorage) {
+        PacketDistributor.sendToServer(new KeyStatePayload(held, bypassAeStorage));
     }
 
     static void sendModeChange(ChainMode mode) {
@@ -56,6 +62,14 @@ public final class NetworkHandler {
 
     static void openConfigScreen(ServerPlayer player) {
         PacketDistributor.sendToPlayer(player, ConfigSnapshotPayload.current(player));
+    }
+
+    static void syncBlacklist(ServerPlayer player) {
+        PacketDistributor.sendToPlayer(player, new BlacklistSyncPayload(Config.blacklistText()));
+    }
+
+    static void broadcastBlacklist() {
+        PacketDistributor.sendToAllPlayers(new BlacklistSyncPayload(Config.blacklistText()));
     }
 
     static void sendConfigUpdate(ConfigUpdatePayload payload) {
@@ -79,19 +93,24 @@ public final class NetworkHandler {
         Config.BLAST_AUTO_REDUCE_RADIUS.set(payload.blastAutoReduceRadius());
         Config.CONSUME_HUNGER.set(payload.consumeHunger());
         Config.BLOCK_WHITELIST.set(Config.parseWhitelistText(payload.blockWhitelist()));
+        Config.BLOCK_BLACKLIST.set(Config.parseWhitelistText(payload.blockBlacklist()));
         Config.DEFAULT_MODE.set(Mth.clamp(payload.mode(), 0, ChainMode.values().length - 1));
         ChainEvents.setMode(player, payload.mode());
         Config.SPEC.save();
+        broadcastBlacklist();
         player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                 "message.veinminerplus.config_saved"), false);
     }
 
-    public record KeyStatePayload(boolean held) implements CustomPacketPayload {
+    public record KeyStatePayload(boolean held, boolean bypassAeStorage) implements CustomPacketPayload {
         public static final Type<KeyStatePayload> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "key_state"));
         public static final StreamCodec<RegistryFriendlyByteBuf, KeyStatePayload> STREAM_CODEC = StreamCodec.of(
-                (buffer, payload) -> buffer.writeBoolean(payload.held),
-                buffer -> new KeyStatePayload(buffer.readBoolean()));
+                (buffer, payload) -> {
+                    buffer.writeBoolean(payload.held);
+                    buffer.writeBoolean(payload.bypassAeStorage);
+                },
+                buffer -> new KeyStatePayload(buffer.readBoolean(), buffer.readBoolean()));
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
@@ -130,7 +149,7 @@ public final class NetworkHandler {
             int maxBlastBlocks, int maxBlastBlocksPerTick, int blastSearchDistance,
             int blastChunkScansPerTick, int blastLowTpsThreshold, boolean blastManhattan,
             boolean blastAutoReduceRadius,
-            boolean consumeHunger, int mode, String blockWhitelist) implements CustomPacketPayload {
+            boolean consumeHunger, int mode, String blockWhitelist, String blockBlacklist) implements CustomPacketPayload {
         public static final Type<ConfigSnapshotPayload> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "config_snapshot"));
         public static final StreamCodec<RegistryFriendlyByteBuf, ConfigSnapshotPayload> STREAM_CODEC = StreamCodec.of(
@@ -143,8 +162,22 @@ public final class NetworkHandler {
                     Config.BLAST_CHUNK_SCANS_PER_TICK.getAsInt(),
                     Config.BLAST_LOW_TPS_THRESHOLD.getAsInt(), Config.BLAST_MANHATTAN.getAsBoolean(),
                     Config.BLAST_AUTO_REDUCE_RADIUS.getAsBoolean(), Config.CONSUME_HUNGER.getAsBoolean(),
-                    ChainEvents.getMode(player).id(), Config.whitelistText());
+                    ChainEvents.getMode(player).id(), Config.whitelistText(), Config.blacklistText());
         }
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record BlacklistSyncPayload(String blockBlacklist) implements CustomPacketPayload {
+        public static final Type<BlacklistSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "blacklist_sync"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, BlacklistSyncPayload> STREAM_CODEC = StreamCodec.of(
+                (buffer, payload) -> buffer.writeUtf(payload.blockBlacklist == null ? "" : payload.blockBlacklist,
+                        MAX_CONFIG_SNAPSHOT_TEXT_LENGTH),
+                buffer -> new BlacklistSyncPayload(buffer.readUtf(MAX_CONFIG_SNAPSHOT_TEXT_LENGTH)));
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
@@ -173,7 +206,7 @@ public final class NetworkHandler {
             int maxBlastBlocks, int maxBlastBlocksPerTick, int blastSearchDistance,
             int blastChunkScansPerTick, int blastLowTpsThreshold, boolean blastManhattan,
             boolean blastAutoReduceRadius,
-            boolean consumeHunger, int mode, String blockWhitelist) implements CustomPacketPayload {
+            boolean consumeHunger, int mode, String blockWhitelist, String blockBlacklist) implements CustomPacketPayload {
         public static final Type<ConfigUpdatePayload> TYPE = new Type<>(
                 ResourceLocation.fromNamespaceAndPath(VeinMinerPlus.MODID, "config_update"));
         public static final StreamCodec<RegistryFriendlyByteBuf, ConfigUpdatePayload> STREAM_CODEC = StreamCodec.of(
@@ -190,16 +223,16 @@ public final class NetworkHandler {
                 payload.maxBlastBlocksPerTick(), payload.blastSearchDistance(), payload.blastChunkScansPerTick(),
                 payload.blastLowTpsThreshold(),
                 payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode(),
-                payload.blockWhitelist());
+                payload.blockWhitelist(), payload.blockBlacklist(), MAX_CONFIG_SNAPSHOT_TEXT_LENGTH);
     }
 
     private static ConfigSnapshotPayload readConfigSnapshot(RegistryFriendlyByteBuf buffer) {
-        ConfigValues values = readConfig(buffer);
+        ConfigValues values = readConfig(buffer, MAX_CONFIG_SNAPSHOT_TEXT_LENGTH);
         return new ConfigSnapshotPayload(values.maxNormalBlocks(), values.maxNormalBlocksPerTick(),
                 values.maxBlastBlocks(), values.maxBlastBlocksPerTick(), values.blastSearchDistance(),
                 values.blastChunkScansPerTick(), values.blastLowTpsThreshold(), values.blastManhattan(),
                 values.blastAutoReduceRadius(),
-                values.consumeHunger(), values.mode(), values.blockWhitelist());
+                values.consumeHunger(), values.mode(), values.blockWhitelist(), values.blockBlacklist());
     }
 
     private static void writeConfigUpdate(RegistryFriendlyByteBuf buffer, ConfigUpdatePayload payload) {
@@ -207,22 +240,23 @@ public final class NetworkHandler {
                 payload.maxBlastBlocksPerTick(), payload.blastSearchDistance(), payload.blastChunkScansPerTick(),
                 payload.blastLowTpsThreshold(),
                 payload.blastManhattan(), payload.blastAutoReduceRadius(), payload.consumeHunger(), payload.mode(),
-                payload.blockWhitelist());
+                payload.blockWhitelist(), payload.blockBlacklist(), MAX_WHITELIST_TEXT_LENGTH);
     }
 
     private static ConfigUpdatePayload readConfigUpdate(RegistryFriendlyByteBuf buffer) {
-        ConfigValues values = readConfig(buffer);
+        ConfigValues values = readConfig(buffer, MAX_WHITELIST_TEXT_LENGTH);
         return new ConfigUpdatePayload(values.maxNormalBlocks(), values.maxNormalBlocksPerTick(),
                 values.maxBlastBlocks(), values.maxBlastBlocksPerTick(), values.blastSearchDistance(),
                 values.blastChunkScansPerTick(), values.blastLowTpsThreshold(), values.blastManhattan(),
                 values.blastAutoReduceRadius(),
-                values.consumeHunger(), values.mode(), values.blockWhitelist());
+                values.consumeHunger(), values.mode(), values.blockWhitelist(), values.blockBlacklist());
     }
 
     private static void writeConfig(RegistryFriendlyByteBuf buffer, int maxNormalBlocks,
             int maxNormalBlocksPerTick, int maxBlastBlocks, int maxBlastBlocksPerTick,
             int blastSearchDistance, int blastChunkScansPerTick, int blastLowTpsThreshold, boolean blastManhattan,
-            boolean blastAutoReduceRadius, boolean consumeHunger, int mode, String blockWhitelist) {
+            boolean blastAutoReduceRadius, boolean consumeHunger, int mode, String blockWhitelist,
+            String blockBlacklist, int textLimit) {
         buffer.writeVarInt(maxNormalBlocks);
         buffer.writeVarInt(maxNormalBlocksPerTick);
         buffer.writeVarInt(maxBlastBlocks);
@@ -234,19 +268,20 @@ public final class NetworkHandler {
         buffer.writeBoolean(blastAutoReduceRadius);
         buffer.writeBoolean(consumeHunger);
         buffer.writeVarInt(mode);
-        buffer.writeUtf(blockWhitelist == null ? "" : blockWhitelist, MAX_WHITELIST_TEXT_LENGTH);
+        buffer.writeUtf(blockWhitelist == null ? "" : blockWhitelist, textLimit);
+        buffer.writeUtf(blockBlacklist == null ? "" : blockBlacklist, textLimit);
     }
 
-    private static ConfigValues readConfig(RegistryFriendlyByteBuf buffer) {
+    private static ConfigValues readConfig(RegistryFriendlyByteBuf buffer, int textLimit) {
         return new ConfigValues(buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(),
                 buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readBoolean(), buffer.readBoolean(),
-                buffer.readBoolean(), buffer.readVarInt(), buffer.readUtf(MAX_WHITELIST_TEXT_LENGTH));
+                buffer.readBoolean(), buffer.readVarInt(), buffer.readUtf(textLimit), buffer.readUtf(textLimit));
     }
 
     private record ConfigValues(int maxNormalBlocks, int maxNormalBlocksPerTick, int maxBlastBlocks,
             int maxBlastBlocksPerTick, int blastSearchDistance, int blastChunkScansPerTick,
             int blastLowTpsThreshold,
             boolean blastManhattan, boolean blastAutoReduceRadius, boolean consumeHunger, int mode,
-            String blockWhitelist) {
+            String blockWhitelist, String blockBlacklist) {
     }
 }

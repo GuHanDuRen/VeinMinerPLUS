@@ -22,7 +22,7 @@ import org.lwjgl.input.Mouse;
 public class VeinMinerConfigScreen extends GuiScreen {
     private static final int WHITELIST_ROW_HEIGHT = 20;
     private static final int WHITELIST_MAX_VISIBLE_ROWS = 5;
-    private static final int WHITELIST_MAX_ROWS = Config.MAX_WHITELIST_ENTRIES + 1;
+    private static final int WHITELIST_MAX_ROWS = Config.MAX_WHITELIST_ENTRIES;
     private static final int WHITELIST_CONTROL_GAP = 4;
     private static final int WHITELIST_CONTROL_WIDTH = 20;
     private static final int WHITELIST_REMOVE_BUTTON_BASE = 1000;
@@ -30,19 +30,18 @@ public class VeinMinerConfigScreen extends GuiScreen {
     private static final int FIELD_ROW_HEIGHT = 30;
     private static final int FIELD_HEIGHT = 18;
     private static final int COLUMN_GAP = 12;
-    private static final int WHITELIST_LABEL_HEIGHT = 10;
     private static final int WHITELIST_SECTION_GAP = 4;
     private static final int SECTION_SPACING = 14;
     private static final int SECTION_HEADER_HEIGHT = 18;
     private static final int BACKGROUND_COLOR = 0xED101820;
     private static final int PANEL_COLOR = 0xF018242D;
     private static final int SECTION_PANEL_COLOR = 0xF0141C26;
-    private static final int BORDER_COLOR = 0xFF2B414C;
+    private static final int BORDER_COLOR = 0xFF52636B;
     private static final int HEADER_COLOR = 0xFF1D3039;
-    private static final int ACCENT_COLOR = 0xFF59D8BC;
+    private static final int ACCENT_COLOR = 0xFF9AB4AB;
     private static final int TEXT_COLOR = 0xFFE5EEF2;
     private static final int MUTED_TEXT_COLOR = 0xFF96ADB7;
-    private static final int SECTION_TITLE_COLOR = 0xFF59D8BC;
+    private static final int SECTION_TITLE_COLOR = 0xFF9AB4AB;
     private static final String[] FIELD_LABELS = {
             "screen.veinminerplus.config.normal_limit", "screen.veinminerplus.config.normal_speed",
             "screen.veinminerplus.config.blast_limit", "screen.veinminerplus.config.blast_speed",
@@ -71,6 +70,9 @@ public class VeinMinerConfigScreen extends GuiScreen {
     private int whitelistLineCount;
     private int whitelistScrollRow;
     private String whitelistDraft;
+    private String blacklistDraft;
+    private boolean editingBlacklist;
+    private boolean editingRules;
     private int whitelistBaseY;
     private int whitelistViewportBottom;
     private int whitelistVisibleRows;
@@ -99,6 +101,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
         captureDraftValues();
         String[] values = currentFieldValues();
         fields.clear();
+        buttonList.clear();
         whitelistRemoveButtons.clear();
         int left = contentLeft();
         int columnWidth = columnWidth();
@@ -150,7 +153,8 @@ public class VeinMinerConfigScreen extends GuiScreen {
         controlsTop = playerRowStart + fieldRowHeight + SECTION_SPACING;
         controlsBottom = controlsTop;
 
-        int whitelistY = playerRowStart + fieldRowHeight + SECTION_SPACING;
+        int whitelistY = editingRules ? contentTop + FIELD_HEIGHT + 4
+                : playerRowStart + fieldRowHeight + SECTION_SPACING;
         whitelistBaseY = whitelistY;
         whitelistVisibleRows = Math.max(1,
                 Math.min(WHITELIST_MAX_VISIBLE_ROWS, (height - whitelistBaseY - 40) / WHITELIST_ROW_HEIGHT));
@@ -170,7 +174,25 @@ public class VeinMinerConfigScreen extends GuiScreen {
         int whitelistAddX = whitelistRemoveX + WHITELIST_CONTROL_WIDTH + WHITELIST_CONTROL_GAP;
         buttonList.add(new StyledButton(104, whitelistAddX, whitelistY,
                 WHITELIST_CONTROL_WIDTH, FIELD_HEIGHT, "+"));
+        buttonList.add(new StyledButton(105, left, whitelistY - FIELD_HEIGHT - 4,
+                columnWidth, FIELD_HEIGHT, I18n.format("screen.veinminerplus.config.whitelist_tab")));
+        buttonList.add(new StyledButton(106, left + columnWidth + COLUMN_GAP,
+                whitelistY - FIELD_HEIGHT - 4, columnWidth, FIELD_HEIGHT,
+                I18n.format("screen.veinminerplus.config.blacklist")));
         layoutWhitelistRows();
+        for (GuiTextField field : fields) {
+            field.setVisible(!editingRules);
+        }
+        for (GuiButton button : buttonList) {
+            if (button.id >= 100 && button.id <= 103) {
+                button.visible = !editingRules;
+            } else if (button.id == 104 || button.id == 105 || button.id == 106) {
+                button.visible = editingRules;
+            }
+        }
+        buttonList.add(new StyledButton(107, left + fullWidth - 72, 8, 72, 15,
+                I18n.format(editingRules ? "screen.veinminerplus.config.general"
+                        : "screen.veinminerplus.config.rules")));
 
         int footerWidth = Math.min(100, Math.max(64, (width - 20 - 10) / 3));
         int footerY = height - 22;
@@ -182,11 +204,14 @@ public class VeinMinerConfigScreen extends GuiScreen {
                 I18n.format("gui.done")));
         buttonList.add(new StyledButton(201, footerLeft + (footerWidth + 5) * 2, footerY, footerWidth, 20,
                 I18n.format("gui.cancel")));
+        updateSaveButton();
     }
 
     private void initializeWhitelistRows() {
-        String source = whitelistDraft != null ? whitelistDraft : initial.blockWhitelist;
-        if (source == null || source.trim().isEmpty()) {
+        String source = editingBlacklist
+                ? blacklistDraft != null ? blacklistDraft : initial.blockBlacklist
+                : whitelistDraft != null ? whitelistDraft : initial.blockWhitelist;
+        if (!editingBlacklist && (source == null || source.trim().isEmpty())) {
             source = Config.whitelistText();
         }
 
@@ -197,7 +222,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
                 lines.add(line.trim());
             }
         }
-        if (lines.isEmpty()) {
+        if (lines.isEmpty() && !editingBlacklist) {
             lines.add("*ore");
         }
         if (lines.size() < WHITELIST_MAX_ROWS) {
@@ -228,12 +253,31 @@ public class VeinMinerConfigScreen extends GuiScreen {
         for (int index = 0; index < whitelistLineCount; index++) {
             lines.add(whitelistRows.get(index).getText());
         }
-        whitelistDraft = joinWhitelistLines(lines);
+        if (editingBlacklist) {
+            blacklistDraft = joinWhitelistLines(lines);
+        } else {
+            whitelistDraft = joinWhitelistLines(lines);
+        }
     }
 
     private String whitelistText() {
         captureWhitelistDraft();
-        return whitelistDraft == null ? "" : whitelistDraft;
+        return whitelistDraft == null ? initial.blockWhitelist : whitelistDraft;
+    }
+
+    private String blacklistText() {
+        captureWhitelistDraft();
+        return blacklistDraft == null ? initial.blockBlacklist : blacklistDraft;
+    }
+
+    private void selectRuleList(boolean blacklist) {
+        if (editingBlacklist == blacklist) {
+            return;
+        }
+        captureWhitelistDraft();
+        editingBlacklist = blacklist;
+        whitelistScrollRow = 0;
+        initializeWhitelistRows();
     }
 
     private void setWhitelistLines(List<String> values) {
@@ -248,12 +292,18 @@ public class VeinMinerConfigScreen extends GuiScreen {
                 }
             }
         }
-        if (lines.isEmpty()) {
+        if (lines.isEmpty() && !editingBlacklist) {
             lines.add("*ore");
         }
-        lines.add("");
+        if (lines.size() < WHITELIST_MAX_ROWS) {
+            lines.add("");
+        }
         whitelistLineCount = Math.min(WHITELIST_MAX_ROWS, lines.size());
-        whitelistDraft = joinWhitelistLines(lines);
+        if (editingBlacklist) {
+            blacklistDraft = joinWhitelistLines(lines);
+        } else {
+            whitelistDraft = joinWhitelistLines(lines);
+        }
         for (int index = 0; index < whitelistRows.size(); index++) {
             whitelistRows.get(index).setText(index < whitelistLineCount ? lines.get(index) : "");
         }
@@ -278,7 +328,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
             int y = whitelistBaseY + (index - whitelistScrollRow) * WHITELIST_ROW_HEIGHT;
             row.x = whitelistX;
             row.y = y;
-            row.setVisible(index < whitelistLineCount
+            row.setVisible(editingRules && index < whitelistLineCount
                     && y + FIELD_HEIGHT > whitelistBaseY
                     && y < whitelistViewportBottom);
         }
@@ -286,7 +336,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
             GuiButton button = whitelistRemoveButtons.get(slot);
             int rowIndex = whitelistScrollRow + slot;
             int y = whitelistBaseY + slot * WHITELIST_ROW_HEIGHT;
-            boolean visible = rowIndex < whitelistLineCount && y < whitelistViewportBottom;
+            boolean visible = editingRules && rowIndex < whitelistLineCount && y < whitelistViewportBottom;
             button.x = whitelistX + whitelistWidth + WHITELIST_CONTROL_GAP;
             button.y = y;
             button.visible = visible;
@@ -372,6 +422,13 @@ public class VeinMinerConfigScreen extends GuiScreen {
             button.displayString = modeText();
         } else if (button.id == 104) {
             beginWhitelistSelection();
+        } else if (button.id == 105) {
+            selectRuleList(false);
+        } else if (button.id == 106) {
+            selectRuleList(true);
+        } else if (button.id == 107) {
+            editingRules = !editingRules;
+            initGui();
         } else if (button.id >= WHITELIST_REMOVE_BUTTON_BASE
                 && button.id < WHITELIST_REMOVE_BUTTON_BASE + whitelistRemoveButtons.size()) {
             int slot = button.id - WHITELIST_REMOVE_BUTTON_BASE;
@@ -386,7 +443,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
     }
 
     private void beginWhitelistSelection() {
-        VeinMinerPlusClient.beginWhitelistSelection(this);
+        VeinMinerPlusClient.beginWhitelistSelection(this, editingBlacklist);
     }
 
     void captureDraftValues() {
@@ -397,6 +454,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
         if (state == null) {
             return;
         }
+        selectRuleList(false);
         String current = whitelistText();
         List<String> entries = new ArrayList<String>(Config.parseWhitelistText(current));
         if (entries.isEmpty()) {
@@ -414,6 +472,22 @@ public class VeinMinerConfigScreen extends GuiScreen {
         if (id != null) {
             entries.add(id.toString());
         }
+        setWhitelistLines(Config.normalizeWhitelist(entries));
+        whitelistScrollRow = maxWhitelistScroll();
+        layoutWhitelistRows();
+    }
+
+    void addAimedBlacklistEntry(IBlockState state) {
+        if (state == null) {
+            return;
+        }
+        selectRuleList(true);
+        ResourceLocation id = state.getBlock().getRegistryName();
+        if (id == null) {
+            return;
+        }
+        List<String> entries = new ArrayList<String>(Config.parseWhitelistText(blacklistText()));
+        entries.add(id.toString());
         setWhitelistLines(Config.normalizeWhitelist(entries));
         whitelistScrollRow = maxWhitelistScroll();
         layoutWhitelistRows();
@@ -448,7 +522,9 @@ public class VeinMinerConfigScreen extends GuiScreen {
         autoReduce = Config.DEFAULT_BLAST_AUTO_REDUCE_RADIUS;
         consumeHunger = Config.DEFAULT_CONSUME_HUNGER;
         mode = ChainMode.fromOrdinal(Config.DEFAULT_MODE_ORDINAL);
-        setWhitelistLines(Config.DEFAULT_BLOCK_WHITELIST);
+        whitelistDraft = joinWhitelistLines(Config.DEFAULT_BLOCK_WHITELIST);
+        blacklistDraft = "";
+        initializeWhitelistRows();
         for (GuiButton button : buttonList) {
             if (button.id == 100) {
                 button.displayString = toggle("screen.veinminerplus.config.manhattan", manhattan);
@@ -463,6 +539,9 @@ public class VeinMinerConfigScreen extends GuiScreen {
     }
 
     private void save() {
+        if (ruleTextTooLong()) {
+            return;
+        }
         int normal = parse(0, initial.maxNormalBlocks, FIELD_MINS[0], FIELD_MAXES[0]);
         int normalTick = parse(1, initial.maxNormalBlocksPerTick, FIELD_MINS[1], FIELD_MAXES[1]);
         int blast = parse(2, initial.maxBlastBlocks, FIELD_MINS[2], FIELD_MAXES[2]);
@@ -471,10 +550,27 @@ public class VeinMinerConfigScreen extends GuiScreen {
         int scanPerTick = parse(5, initial.blastChunkScansPerTick, FIELD_MINS[5], FIELD_MAXES[5]);
         int lowTps = parse(6, initial.blastLowTpsThreshold, FIELD_MINS[6], FIELD_MAXES[6]);
         String whitelist = String.join("\n", Config.parseWhitelistText(whitelistText()));
+        String blacklist = String.join("\n", Config.parseWhitelistText(blacklistText()));
         NetworkHandler.sendConfigUpdate(new NetworkHandler.ConfigUpdateMessage(normal, normalTick, blast, blastTick,
-                distance, scanPerTick, lowTps, manhattan, autoReduce, consumeHunger, mode.id(), whitelist));
+                distance, scanPerTick, lowTps, manhattan, autoReduce, consumeHunger, mode.id(), whitelist, blacklist));
         VeinMinerPlusClient.setClientMode(mode);
         mc.displayGuiScreen(null);
+    }
+
+    private boolean ruleTextTooLong() {
+        return String.join("\n", Config.parseWhitelistText(whitelistText())).length()
+                > NetworkHandler.MAX_WHITELIST_TEXT_LENGTH
+                || String.join("\n", Config.parseWhitelistText(blacklistText())).length()
+                > NetworkHandler.MAX_WHITELIST_TEXT_LENGTH;
+    }
+
+    private void updateSaveButton() {
+        boolean enabled = !ruleTextTooLong();
+        for (GuiButton button : buttonList) {
+            if (button.id == 200) {
+                button.enabled = enabled;
+            }
+        }
     }
 
     private int parse(int index, int fallback, int min, int max) {
@@ -493,26 +589,40 @@ public class VeinMinerConfigScreen extends GuiScreen {
         for (GuiTextField row : whitelistRows) {
             row.updateCursorCounter();
         }
+        updateSaveButton();
     }
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         for (GuiTextField field : fields) {
-            field.textboxKeyTyped(typedChar, keyCode);
+            if (field.getVisible()) {
+                field.textboxKeyTyped(typedChar, keyCode);
+            }
         }
         for (GuiTextField row : whitelistRows) {
-            row.textboxKeyTyped(typedChar, keyCode);
+            if (row.getVisible()) {
+                row.textboxKeyTyped(typedChar, keyCode);
+            }
         }
+        updateSaveButton();
         super.keyTyped(typedChar, keyCode);
     }
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         for (GuiTextField field : fields) {
-            field.mouseClicked(mouseX, mouseY, mouseButton);
+            if (field.getVisible()) {
+                field.mouseClicked(mouseX, mouseY, mouseButton);
+            } else {
+                field.setFocused(false);
+            }
         }
         for (GuiTextField row : whitelistRows) {
-            row.mouseClicked(mouseX, mouseY, mouseButton);
+            if (row.getVisible()) {
+                row.mouseClicked(mouseX, mouseY, mouseButton);
+            } else {
+                row.setFocused(false);
+            }
         }
         super.mouseClicked(mouseX, mouseY, mouseButton);
     }
@@ -523,7 +633,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
         if (wheel != 0) {
             int mouseX = Mouse.getEventX() * width / mc.displayWidth;
             int mouseY = height - Mouse.getEventY() * height / mc.displayHeight - 1;
-            if (insideWhitelistViewport(mouseX, mouseY) && scrollWhitelist(wheel)) {
+            if (editingRules && insideWhitelistViewport(mouseX, mouseY) && scrollWhitelist(wheel)) {
                 return;
             }
         }
@@ -542,32 +652,35 @@ public class VeinMinerConfigScreen extends GuiScreen {
         drawRect(left - 8, 6, right + 8, 25, HEADER_COLOR);
         drawRect(left - 8, 6, right + 8, 7, ACCENT_COLOR);
         String title = fontRenderer.trimStringToWidth(I18n.format("screen.veinminerplus.config.title"),
-                right - left);
-        fontRenderer.drawString(title, (width - fontRenderer.getStringWidth(title)) / 2, 12, TEXT_COLOR);
+                right - left - 78);
+        fontRenderer.drawString(title, left + (right - left - 78 - fontRenderer.getStringWidth(title)) / 2,
+                12, TEXT_COLOR);
 
-        // Draw field groups with improved styling
-        int sectionTop = contentTop;
+        if (!editingRules) {
+            // Draw field groups with improved styling
+            int sectionTop = contentTop;
 
-        // Normal Mining Section
-        drawSectionHeader(left, sectionTop, right, "screen.veinminerplus.config.section.normal");
-        int normalRowStart = sectionTop + SECTION_HEADER_HEIGHT + 2;
-        drawFieldSection(left, normalRowStart, columnWidth, right, 0, 1);
+            // Normal Mining Section
+            drawSectionHeader(left, sectionTop, right, "screen.veinminerplus.config.section.normal");
+            int normalRowStart = sectionTop + SECTION_HEADER_HEIGHT + 2;
+            drawFieldSection(left, normalRowStart, columnWidth, right, 0, 1);
 
-        // Blast Mining Section
-        int blastTop = normalRowStart + fieldRowHeight + SECTION_SPACING;
-        drawSectionHeader(left, blastTop, right, "screen.veinminerplus.config.section.blast");
-        int blastRowStart = blastTop + SECTION_HEADER_HEIGHT + 2;
-        drawFieldSection(left, blastRowStart, columnWidth, right, 2, 4);
+            // Blast Mining Section
+            int blastTop = normalRowStart + fieldRowHeight + SECTION_SPACING;
+            drawSectionHeader(left, blastTop, right, "screen.veinminerplus.config.section.blast");
+            int blastRowStart = blastTop + SECTION_HEADER_HEIGHT + 2;
+            drawFieldSection(left, blastRowStart, columnWidth, right, 2, 4);
 
-        // Performance Section
-        int perfTop = blastRowStart + fieldRowHeight * 2 + SECTION_SPACING;
-        drawSectionHeader(left, perfTop, right, "screen.veinminerplus.config.section.performance");
-        int perfRowStart = perfTop + SECTION_HEADER_HEIGHT + 2;
-        drawFieldSection(left, perfRowStart, columnWidth, right, 5, 6);
+            // Performance Section
+            int perfTop = blastRowStart + fieldRowHeight * 2 + SECTION_SPACING;
+            drawSectionHeader(left, perfTop, right, "screen.veinminerplus.config.section.performance");
+            int perfRowStart = perfTop + SECTION_HEADER_HEIGHT + 2;
+            drawFieldSection(left, perfRowStart, columnWidth, right, 5, 6);
 
-        // Player Behavior Section
-        int playerTop = perfRowStart + fieldRowHeight + SECTION_SPACING;
-        drawSectionHeader(left, playerTop, right, "screen.veinminerplus.config.section.player");
+            // Player Behavior Section
+            int playerTop = perfRowStart + fieldRowHeight + SECTION_SPACING;
+            drawSectionHeader(left, playerTop, right, "screen.veinminerplus.config.section.player");
+        }
 
         // Footer
         drawRect(0, height - 24, width, height, BACKGROUND_COLOR);
@@ -578,11 +691,7 @@ public class VeinMinerConfigScreen extends GuiScreen {
             fields.get(i).drawTextBox();
         }
 
-        if (!whitelistRows.isEmpty()) {
-            int whitelistY = whitelistBaseY;
-            String label = fontRenderer.trimStringToWidth(I18n.format("screen.veinminerplus.config.whitelist"),
-                    right - left);
-            fontRenderer.drawString(label, left, whitelistY - WHITELIST_LABEL_HEIGHT, TEXT_COLOR);
+        if (editingRules && !whitelistRows.isEmpty()) {
             for (GuiTextField row : whitelistRows) {
                 row.drawTextBox();
             }
@@ -594,12 +703,25 @@ public class VeinMinerConfigScreen extends GuiScreen {
         // Draw tooltips
         for (int i = 0; i < fields.size(); i++) {
             GuiTextField field = fields.get(i);
+            if (!field.getVisible()) {
+                continue;
+            }
             if (mouseX >= field.x && mouseX < field.x + field.width
                     && mouseY >= field.y - 11 && mouseY < field.y + field.height) {
                 List<String> tooltip = new ArrayList<String>();
                 tooltip.add(I18n.format(FIELD_LABELS[i]));
                 tooltip.add(FIELD_MINS[i] + " - " + FIELD_MAXES[i]);
                 drawHoveringText(tooltip, mouseX, mouseY);
+                break;
+            }
+        }
+        for (GuiButton button : buttonList) {
+            if (button.id == 200 && !button.enabled
+                    && mouseX >= button.x && mouseX < button.x + button.width
+                    && mouseY >= button.y && mouseY < button.y + button.height) {
+                drawHoveringText(fontRenderer.listFormattedStringToWidth(
+                        I18n.format("screen.veinminerplus.config.rules_too_long",
+                                NetworkHandler.MAX_WHITELIST_TEXT_LENGTH), 220), mouseX, mouseY);
                 break;
             }
         }
@@ -660,7 +782,8 @@ public class VeinMinerConfigScreen extends GuiScreen {
                 return;
             }
             hovered = mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
-            boolean primary = id == 200;
+            boolean primary = id == 200 || id == 105 && !editingBlacklist || id == 106 && editingBlacklist
+                    || id == 107 && editingRules;
             int fill = primary ? ACCENT_COLOR : HEADER_COLOR;
             if (hovered && enabled) {
                 fill = primary ? 0xFF80E5CE : 0xFF29434B;

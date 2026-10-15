@@ -4,6 +4,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class Config {
@@ -21,9 +22,12 @@ public final class Config {
     public static final boolean DEFAULT_DEBUG_LOGGING = false;
     public static final int DEFAULT_MODE_ORDINAL = 0;
     public static final List<String> DEFAULT_BLOCK_WHITELIST = List.of("*ore");
+    public static final List<String> DEFAULT_BLOCK_BLACKLIST = List.of();
     static final int MAX_WHITELIST_ENTRIES = 256;
     static final int MAX_WHITELIST_ENTRY_LENGTH = 128;
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
+    private static volatile BlacklistState serverBlacklist;
+    private static volatile ChainEvents.WhitelistMatcher clientBlacklist;
 
     public static final ModConfigSpec.IntValue MAX_NORMAL_BLOCKS = BUILDER
             .comment("Maximum blocks in normal connected mode. Range: 32-2147483647.")
@@ -79,6 +83,11 @@ public final class Config {
             .defineListAllowEmpty("blockWhitelist", DEFAULT_BLOCK_WHITELIST, value -> value instanceof String string
                     && isValidBlockId(string));
 
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> BLOCK_BLACKLIST = BUILDER
+            .comment("Blocks excluded from every chain mode and x-ray. Supports block IDs, * wildcards, and #block tags. Overrides the whitelist. Does not block manual single-block mining.")
+            .defineListAllowEmpty("blockBlacklist", DEFAULT_BLOCK_BLACKLIST, value -> value instanceof String string
+                    && isValidBlockId(string));
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private Config() {
@@ -119,6 +128,34 @@ public final class Config {
         return String.join("\n", effectiveWhitelist(BLOCK_WHITELIST.get()));
     }
 
+    static String blacklistText() {
+        return String.join("\n", normalizeWhitelist(BLOCK_BLACKLIST.get()));
+    }
+
+    static boolean isBlockBlacklisted(BlockState state) {
+        List<? extends String> source = BLOCK_BLACKLIST.get();
+        BlacklistState current = serverBlacklist;
+        if (current == null || current.source() != source) {
+            current = new BlacklistState(source, new ChainEvents.WhitelistMatcher(source));
+            serverBlacklist = current;
+            ChainEvents.invalidateChunkScanCache();
+        }
+        return current.matcher().matchesLive(state);
+    }
+
+    static boolean isClientBlockBlacklisted(BlockState state) {
+        ChainEvents.WhitelistMatcher current = clientBlacklist;
+        return current == null ? isBlockBlacklisted(state) : current.matchesLive(state);
+    }
+
+    static void setClientBlacklist(String text) {
+        clientBlacklist = new ChainEvents.WhitelistMatcher(parseWhitelistText(text));
+    }
+
+    static void resetClientBlacklist() {
+        clientBlacklist = null;
+    }
+
     static List<String> effectiveWhitelist(Iterable<?> values) {
         return normalizeWhitelist(values);
     }
@@ -145,6 +182,9 @@ public final class Config {
         if (!id.contains(":") && !wildcard) {
             id = "minecraft:" + id;
         }
+        if (id.length() + (tag ? 1 : 0) > MAX_WHITELIST_ENTRY_LENGTH) {
+            return null;
+        }
         if (wildcard) {
             if (tag) {
                 return null;
@@ -161,5 +201,8 @@ public final class Config {
         }
         net.minecraft.resources.ResourceLocation location = net.minecraft.resources.ResourceLocation.tryParse(id);
         return location == null ? null : (tag ? "#" + location : location.toString());
+    }
+
+    private record BlacklistState(List<? extends String> source, ChainEvents.WhitelistMatcher matcher) {
     }
 }

@@ -84,6 +84,7 @@ public final class ChainEvents {
     private static final Map<UUID, ChainFailNotice> CHAIN_FAIL_NOTICES = new HashMap<UUID, ChainFailNotice>();
     private static final Map<UUID, ChainMode> PLAYER_MODES = new HashMap<UUID, ChainMode>();
     private static final Set<UUID> HELD_KEYS = new HashSet<UUID>();
+    private static final Set<UUID> AE_STORAGE_BYPASS = new HashSet<UUID>();
     private static final Map<UUID, ChainJob> ACTIVE_JOBS = new HashMap<UUID, ChainJob>();
     private static final Map<UUID, RightClickJob> ACTIVE_RIGHT_CLICK_JOBS = new HashMap<UUID, RightClickJob>();
     private static final Set<UUID> RIGHT_CLICK_GUARD = new HashSet<UUID>();
@@ -92,6 +93,18 @@ public final class ChainEvents {
     private static final Map<UUID, BreakFace> LAST_FACES = new HashMap<UUID, BreakFace>();
     private static final Map<UUID, HungerSnapshot> HUNGER_STARTS = new HashMap<UUID, HungerSnapshot>();
     private static final ThreadLocal<DropCapture> CAPTURING_DROPS = new ThreadLocal<DropCapture>();
+
+    @SubscribeEvent
+    public void onOreRegister(OreDictionary.OreRegisterEvent event) {
+        Config.onOreDictionaryChanged();
+    }
+
+    @SubscribeEvent
+    public void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.player instanceof EntityPlayerMP) {
+            NetworkHandler.syncBlacklist((EntityPlayerMP) event.player);
+        }
+    }
 
     @SubscribeEvent
     public void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
@@ -110,6 +123,7 @@ public final class ChainEvents {
         }
         PLAYER_MODES.remove(id);
         HELD_KEYS.remove(id);
+        AE_STORAGE_BYPASS.remove(id);
         PENDING_ORIGINS.remove(id);
         LAST_FACES.remove(id);
         HUNGER_STARTS.remove(id);
@@ -149,7 +163,8 @@ public final class ChainEvents {
         WorldServer world = (WorldServer) event.getWorld();
         BlockPos origin = event.getPos();
         IBlockState state = world.getBlockState(origin);
-        if (state.getBlock() == Blocks.AIR || !world.isBlockModifiable(player, origin)) {
+        if (state.getBlock() == Blocks.AIR || Config.isBlockBlacklisted(state)
+                || !world.isBlockModifiable(player, origin)) {
             return;
         }
 
@@ -223,7 +238,7 @@ public final class ChainEvents {
             return;
         }
         EnumFacing face = resolveBreakFace(player, pos);
-        DropBuffer drops = new DropBuffer();
+        DropBuffer drops = new DropBuffer(AE_STORAGE_BYPASS.contains(id));
         PENDING_DROPS.put(id, drops);
         PENDING_ORIGINS.put(id, pos);
         HungerSnapshot hunger = HUNGER_STARTS.remove(id);
@@ -303,20 +318,29 @@ public final class ChainEvents {
         }
     }
 
-    public static void setKeyHeld(EntityPlayer player, boolean held) {
+    public static void setKeyHeld(EntityPlayer player, boolean held, boolean bypassAeStorage) {
         if (!(player instanceof EntityPlayerMP)) {
             return;
         }
         UUID id = player.getUniqueID();
         debug("key state player={} held={}", player.getName(), held);
         if (held) {
-            HELD_KEYS.add(id);
-            if (!Config.consumeHunger && !player.isCreative()) {
+            boolean newlyHeld = HELD_KEYS.add(id);
+            if (newlyHeld && !Config.consumeHunger && !player.isCreative()) {
                 HUNGER_STARTS.put(id, HungerSnapshot.capture((EntityPlayerMP) player));
             }
         } else {
             HELD_KEYS.remove(id);
             HUNGER_STARTS.remove(id);
+        }
+        if (held && bypassAeStorage) {
+            AE_STORAGE_BYPASS.add(id);
+            ChainJob job = ACTIVE_JOBS.get(id);
+            if (job != null) {
+                job.drops.bypassAeStorage = true;
+            }
+        } else {
+            AE_STORAGE_BYPASS.remove(id);
         }
     }
 
@@ -333,6 +357,10 @@ public final class ChainEvents {
         return mode == null ? ChainMode.fromOrdinal(Config.defaultMode) : mode;
     }
 
+    static void invalidateChunkScanCache() {
+        UnGeneratedChunkOptimization.clearAllCache();
+    }
+
     private static boolean isEligible(WorldServer world, EntityPlayerMP player, BlockPos pos, IBlockState state,
             Block targetBlock, ChainMode mode) {
         return isEligible(world, player, pos, state, targetBlock, mode, configuredWhitelist());
@@ -345,6 +373,9 @@ public final class ChainEvents {
 
     private static String eligibilityFailure(WorldServer world, EntityPlayerMP player, BlockPos pos, IBlockState state,
             Block targetBlock, ChainMode mode, Set<String> whitelist) {
+        if (Config.isBlockBlacklisted(state)) {
+            return "blacklisted";
+        }
         if (mode == ChainMode.XRAY) {
             return "mode unavailable";
         }
@@ -745,6 +776,11 @@ public final class ChainEvents {
     private static final class DropBuffer {
         private final List<ItemStack> items = new ArrayList<ItemStack>();
         private int experience;
+        private boolean bypassAeStorage;
+
+        DropBuffer(boolean bypassAeStorage) {
+            this.bypassAeStorage = bypassAeStorage;
+        }
 
         void add(ItemStack stack) {
             if (stack == null || stack.isEmpty()) {
@@ -783,8 +819,17 @@ public final class ChainEvents {
                 experience = 0;
                 return;
             }
+            if (!bypassAeStorage) {
+                AeStorageCompat.insertDrops(player, items);
+            }
             for (ItemStack stack : items) {
+                if (stack.isEmpty()) {
+                    continue;
+                }
                 EntityItem entity = new EntityItem(world, player.posX, player.posY, player.posZ, stack);
+                if (bypassAeStorage && AeStorageCompat.isMagnetSupported()) {
+                    entity.getEntityData().setBoolean("PreventRemoteMovement", true);
+                }
                 entity.setPickupDelay(10);
                 entity.motionX = entity.motionY = entity.motionZ = 0.0D;
                 world.spawnEntity(entity);
@@ -855,7 +900,8 @@ public final class ChainEvents {
                 BlockPos candidate = node.pos.add(offset.getX(), offset.getY(), offset.getZ());
                 if (!isWorldPos(candidate) || !world.isBlockLoaded(candidate)
                         || !examined.add(candidate) || !world.isBlockModifiable(player, candidate)
-                        || world.getBlockState(candidate).getBlock() != targetBlock) {
+                        || world.getBlockState(candidate).getBlock() != targetBlock
+                        || Config.isBlockBlacklisted(world.getBlockState(candidate))) {
                     continue;
                 }
 
@@ -879,6 +925,9 @@ public final class ChainEvents {
         }
 
         private void useOn(BlockPos pos) {
+            if (Config.isBlockBlacklisted(world.getBlockState(pos))) {
+                return;
+            }
             UUID id = player.getUniqueID();
             RIGHT_CLICK_GUARD.add(id);
             try {
@@ -1159,6 +1208,9 @@ public final class ChainEvents {
         }
 
         private boolean matchesSparseState(IBlockState state) {
+            if (Config.isBlockBlacklisted(state)) {
+                return false;
+            }
             boolean modeMatches;
             if (mode == ChainMode.BLAST_SAME) {
                 modeMatches = sameTarget(state, targetBlock);
@@ -1586,11 +1638,11 @@ public final class ChainEvents {
     }
 
     // 性能优化：白名单预编译匹配器 - 减少 60-80% 的白名单检查开销
-    private static final class WhitelistMatcher {
+    static final class WhitelistMatcher {
         private final Set<String> exactMatches = new HashSet<String>();
         private final Set<String> wildcardPatterns = new HashSet<String>();
         private final Set<String> oreNames = new HashSet<String>();
-        private final Map<Block, Boolean> matchCache = new HashMap<Block, Boolean>();
+        private final Map<IBlockState, Boolean> matchCache = new HashMap<IBlockState, Boolean>();
 
         WhitelistMatcher(Set<String> rules) {
             if (rules == null) {
@@ -1611,14 +1663,16 @@ public final class ChainEvents {
         }
 
         boolean matches(IBlockState state) {
-            Block block = state.getBlock();
-            Boolean cached = matchCache.get(block);
+            if (exactMatches.isEmpty() && wildcardPatterns.isEmpty() && oreNames.isEmpty()) {
+                return false;
+            }
+            Boolean cached = matchCache.get(state);
             if (cached != null) {
                 return cached.booleanValue();
             }
 
             boolean result = checkMatch(state);
-            matchCache.put(block, Boolean.valueOf(result));
+            matchCache.put(state, Boolean.valueOf(result));
             return result;
         }
 

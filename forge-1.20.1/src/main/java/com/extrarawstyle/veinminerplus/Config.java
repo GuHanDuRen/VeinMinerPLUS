@@ -4,6 +4,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.ForgeConfigSpec;
 
 public final class Config {
@@ -21,6 +22,7 @@ public final class Config {
     public static final boolean DEFAULT_DEBUG_LOGGING = false;
     public static final int DEFAULT_MODE_ORDINAL = 0;
     public static final List<String> DEFAULT_BLOCK_WHITELIST = List.of("*ore");
+    public static final List<String> DEFAULT_BLOCK_BLACKLIST = List.of();
     static final int MAX_WHITELIST_ENTRIES = 256;
     static final int MAX_WHITELIST_ENTRY_LENGTH = 128;
     private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
@@ -79,7 +81,15 @@ public final class Config {
             .defineListAllowEmpty("blockWhitelist", DEFAULT_BLOCK_WHITELIST, value -> value instanceof String string
                     && isValidBlockId(string));
 
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> BLOCK_BLACKLIST = BUILDER
+            .comment("Blocks excluded from every chain mode. Overrides the whitelist. Supports block IDs, * wildcards, and #block tags.")
+            .defineListAllowEmpty("blockBlacklist", DEFAULT_BLOCK_BLACKLIST, value -> value instanceof String string
+                    && isValidBlockId(string));
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
+    private static List<? extends String> cachedBlacklistRules;
+    private static ChainEvents.WhitelistMatcher blacklistMatcher;
+    private static ChainEvents.WhitelistMatcher clientBlacklistMatcher;
 
     private Config() {
     }
@@ -119,6 +129,34 @@ public final class Config {
         return String.join("\n", effectiveWhitelist(BLOCK_WHITELIST.get()));
     }
 
+    static String blacklistText() {
+        return String.join("\n", effectiveWhitelist(BLOCK_BLACKLIST.get()));
+    }
+
+    static boolean isBlockBlacklisted(BlockState state) {
+        List<? extends String> rules = BLOCK_BLACKLIST.get();
+        if (blacklistMatcher == null || !rules.equals(cachedBlacklistRules)) {
+            cachedBlacklistRules = List.copyOf(rules);
+            blacklistMatcher = new ChainEvents.WhitelistMatcher(rules);
+            ChainEvents.invalidateChunkScanCache();
+        }
+        return blacklistMatcher.matchesLive(state);
+    }
+
+    static boolean isClientBlockBlacklisted(BlockState state) {
+        return clientBlacklistMatcher != null
+                ? clientBlacklistMatcher.matchesLive(state)
+                : isBlockBlacklisted(state);
+    }
+
+    static void setClientBlacklist(String text) {
+        clientBlacklistMatcher = new ChainEvents.WhitelistMatcher(parseWhitelistText(text));
+    }
+
+    static void resetClientBlacklist() {
+        clientBlacklistMatcher = null;
+    }
+
     static List<String> effectiveWhitelist(Iterable<?> values) {
         return normalizeWhitelist(values);
     }
@@ -144,6 +182,9 @@ public final class Config {
         boolean wildcard = id.indexOf('*') >= 0;
         if (!id.contains(":") && !wildcard) {
             id = "minecraft:" + id;
+        }
+        if (id.length() + (tag ? 1 : 0) > MAX_WHITELIST_ENTRY_LENGTH) {
+            return null;
         }
         if (wildcard) {
             if (tag) {

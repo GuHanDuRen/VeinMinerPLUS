@@ -13,9 +13,10 @@ import net.minecraftforge.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import net.minecraftforge.fml.relauncher.Side;
 
 public final class NetworkHandler {
-    private static final String PROTOCOL_VERSION = "4";
+    private static final String PROTOCOL_VERSION = "5";
     public static final int MAX_WHITELIST_TEXT_LENGTH = 4096;
-    private static final int MAX_WHITELIST_BYTES = MAX_WHITELIST_TEXT_LENGTH * 4;
+    public static final int MAX_CONFIG_SNAPSHOT_TEXT_LENGTH =
+            Config.MAX_WHITELIST_ENTRIES * (Config.MAX_WHITELIST_ENTRY_LENGTH + 1);
     private static SimpleNetworkWrapper CHANNEL;
     private static int packetId;
     private static long progressSequence;
@@ -35,10 +36,11 @@ public final class NetworkHandler {
         CHANNEL.registerMessage(ConfigUpdateHandler.class, ConfigUpdateMessage.class, packetId++, Side.SERVER);
         CHANNEL.registerMessage(ProgressHandler.class, ProgressMessage.class, packetId++, Side.CLIENT);
         CHANNEL.registerMessage(LowTpsRadiusNoticeHandler.class, LowTpsRadiusMessage.class, packetId++, Side.CLIENT);
+        CHANNEL.registerMessage(BlacklistSyncHandler.class, BlacklistSyncMessage.class, packetId++, Side.CLIENT);
     }
 
-    public static void sendKeyState(boolean held) {
-        CHANNEL.sendToServer(new KeyStateMessage(held));
+    public static void sendKeyState(boolean held, boolean bypassAeStorage) {
+        CHANNEL.sendToServer(new KeyStateMessage(held, bypassAeStorage));
     }
 
     public static void sendModeChange(ChainMode mode) {
@@ -76,28 +78,49 @@ public final class NetworkHandler {
         CHANNEL.sendToServer(payload);
     }
 
+    public static void syncBlacklist(EntityPlayerMP player) {
+        if (CHANNEL != null) {
+            CHANNEL.sendTo(new BlacklistSyncMessage(Config.blacklistText()), player);
+        }
+    }
+
+    public static void broadcastBlacklist() {
+        if (CHANNEL != null && net.minecraftforge.fml.common.FMLCommonHandler.instance()
+                .getMinecraftServerInstance() != null) {
+            CHANNEL.sendToAll(new BlacklistSyncMessage(Config.blacklistText()));
+        }
+    }
+
     public static class KeyStateMessage implements IMessage {
         private boolean held;
+        private boolean bypassAeStorage;
 
         public KeyStateMessage() {
         }
 
-        public KeyStateMessage(boolean held) {
+        public KeyStateMessage(boolean held, boolean bypassAeStorage) {
             this.held = held;
+            this.bypassAeStorage = bypassAeStorage;
         }
 
         public boolean isHeld() {
             return held;
         }
 
+        public boolean isBypassAeStorage() {
+            return bypassAeStorage;
+        }
+
         @Override
         public void fromBytes(ByteBuf buf) {
             held = buf.readBoolean();
+            bypassAeStorage = buf.readBoolean();
         }
 
         @Override
         public void toBytes(ByteBuf buf) {
             buf.writeBoolean(held);
+            buf.writeBoolean(bypassAeStorage);
         }
     }
 
@@ -152,6 +175,7 @@ public final class NetworkHandler {
         public boolean consumeHunger;
         public int mode;
         public String blockWhitelist;
+        public String blockBlacklist;
 
         public ConfigSnapshotMessage() {
         }
@@ -169,6 +193,7 @@ public final class NetworkHandler {
             consumeHunger = Config.consumeHunger;
             mode = ChainEvents.getMode(player).id();
             blockWhitelist = Config.whitelistText();
+            blockBlacklist = Config.blacklistText();
         }
 
         @Override
@@ -184,7 +209,8 @@ public final class NetworkHandler {
             blastAutoReduceRadius = buf.readBoolean();
             consumeHunger = buf.readBoolean();
             mode = buf.readInt();
-            blockWhitelist = readWhitelist(buf);
+            blockWhitelist = readWhitelist(buf, ruleTextLimit());
+            blockBlacklist = readWhitelist(buf, ruleTextLimit());
         }
 
         @Override
@@ -200,7 +226,12 @@ public final class NetworkHandler {
             buf.writeBoolean(blastAutoReduceRadius);
             buf.writeBoolean(consumeHunger);
             buf.writeInt(mode);
-            writeWhitelist(buf, blockWhitelist);
+            writeWhitelist(buf, blockWhitelist, ruleTextLimit());
+            writeWhitelist(buf, blockBlacklist, ruleTextLimit());
+        }
+
+        protected int ruleTextLimit() {
+            return MAX_CONFIG_SNAPSHOT_TEXT_LENGTH;
         }
     }
 
@@ -212,7 +243,7 @@ public final class NetworkHandler {
                 int maxBlastBlocksPerTick, int blastSearchDistance, int blastChunkScansPerTick,
                 int blastLowTpsThreshold,
                 boolean blastManhattan, boolean blastAutoReduceRadius, boolean consumeHunger, int mode,
-                String blockWhitelist) {
+                String blockWhitelist, String blockBlacklist) {
             this.maxNormalBlocks = maxNormalBlocks;
             this.maxNormalBlocksPerTick = maxNormalBlocksPerTick;
             this.maxBlastBlocks = maxBlastBlocks;
@@ -225,6 +256,33 @@ public final class NetworkHandler {
             this.consumeHunger = consumeHunger;
             this.mode = mode;
             this.blockWhitelist = blockWhitelist;
+            this.blockBlacklist = blockBlacklist;
+        }
+
+        @Override
+        protected int ruleTextLimit() {
+            return MAX_WHITELIST_TEXT_LENGTH;
+        }
+    }
+
+    public static class BlacklistSyncMessage implements IMessage {
+        private String blockBlacklist;
+
+        public BlacklistSyncMessage() {
+        }
+
+        public BlacklistSyncMessage(String blockBlacklist) {
+            this.blockBlacklist = blockBlacklist;
+        }
+
+        @Override
+        public void fromBytes(ByteBuf buf) {
+            blockBlacklist = readWhitelist(buf, MAX_CONFIG_SNAPSHOT_TEXT_LENGTH);
+        }
+
+        @Override
+        public void toBytes(ByteBuf buf) {
+            writeWhitelist(buf, blockBlacklist, MAX_CONFIG_SNAPSHOT_TEXT_LENGTH);
         }
     }
 
@@ -298,35 +356,31 @@ public final class NetworkHandler {
         }
     }
 
-    private static void writeWhitelist(ByteBuf buf, String value) {
+    private static void writeWhitelist(ByteBuf buf, String value, int maxLength) {
         String text = value == null ? "" : value;
-        if (text.length() > MAX_WHITELIST_TEXT_LENGTH) {
-            text = text.substring(0, MAX_WHITELIST_TEXT_LENGTH);
+        if (text.length() > maxLength) {
+            throw new IllegalArgumentException("Block rule text exceeds " + maxLength + " characters");
         }
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAX_WHITELIST_BYTES) {
-            text = text.substring(0, Math.min(text.length(), MAX_WHITELIST_TEXT_LENGTH));
-            bytes = text.getBytes(StandardCharsets.UTF_8);
-        }
         buf.writeInt(bytes.length);
         buf.writeBytes(bytes);
     }
 
-    private static String readWhitelist(ByteBuf buf) {
+    private static String readWhitelist(ByteBuf buf, int maxLength) {
         if (buf.readableBytes() < 4) {
-            return "";
+            throw new IllegalArgumentException("Missing block rule text length");
         }
         int length = buf.readInt();
-        if (length < 0 || length > MAX_WHITELIST_BYTES || length > buf.readableBytes()) {
-            int skip = Math.min(Math.max(length, 0), buf.readableBytes());
-            buf.skipBytes(skip);
-            return "";
+        if (length < 0 || length > maxLength * 4 || length > buf.readableBytes()) {
+            throw new IllegalArgumentException("Invalid block rule text length: " + length);
         }
         byte[] bytes = new byte[length];
         buf.readBytes(bytes);
         String text = new String(bytes, StandardCharsets.UTF_8);
-        return text.length() > MAX_WHITELIST_TEXT_LENGTH
-                ? text.substring(0, MAX_WHITELIST_TEXT_LENGTH) : text;
+        if (text.length() > maxLength) {
+            throw new IllegalArgumentException("Block rule text exceeds " + maxLength + " characters");
+        }
+        return text;
     }
 
     public static class KeyStateHandler implements IMessageHandler<KeyStateMessage, IMessage> {
@@ -336,7 +390,8 @@ public final class NetworkHandler {
                 context.getServerHandler().player.getServerWorld().addScheduledTask(new Runnable() {
                     @Override
                     public void run() {
-                        ChainEvents.setKeyHeld(context.getServerHandler().player, message.isHeld());
+                        ChainEvents.setKeyHeld(context.getServerHandler().player, message.isHeld(),
+                                message.isBypassAeStorage());
                     }
                 });
             }
@@ -417,6 +472,8 @@ public final class NetworkHandler {
                             Config.consumeHunger = message.consumeHunger;
                             Config.blockWhitelist = new java.util.ArrayList<String>(
                                     Config.parseWhitelistText(message.blockWhitelist));
+                            Config.blockBlacklist = new java.util.ArrayList<String>(
+                                    Config.parseWhitelistText(message.blockBlacklist));
                             Config.defaultMode = clamp(message.mode, 0, ChainMode.values().length - 1);
                             ChainEvents.setMode(player, Config.defaultMode);
                             Config.save();
@@ -442,6 +499,21 @@ public final class NetworkHandler {
                     @Override
                     public void run() {
                         VeinMinerPlusClient.updateChainProgress(message.sequence, message.active, message.count);
+                    }
+                });
+            }
+            return null;
+        }
+    }
+
+    public static class BlacklistSyncHandler implements IMessageHandler<BlacklistSyncMessage, IMessage> {
+        @Override
+        public IMessage onMessage(final BlacklistSyncMessage message, MessageContext context) {
+            if (context.side == Side.CLIENT) {
+                net.minecraft.client.Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+                    @Override
+                    public void run() {
+                        VeinMinerPlusClient.updateBlacklist(message.blockBlacklist);
                     }
                 });
             }

@@ -243,7 +243,8 @@ final class XrayClientState {
 
         List<BlockPos> matches = new ArrayList<>();
         minecraft.level.getChunk(chunkX, chunkZ).findBlocks(
-                state -> SELECTED_BLOCK_COLORS.containsKey(state.getBlock()), (pos, state) -> {
+                state -> SELECTED_BLOCK_COLORS.containsKey(state.getBlock())
+                        && !Config.isClientBlockBlacklisted(state), (pos, state) -> {
                     if (withinRadius(minecraft, pos)) {
                         matches.add(pos.immutable());
                     }
@@ -282,7 +283,8 @@ final class XrayClientState {
                         continue;
                     }
                     BlockState state = minecraft.level.getBlockState(pos);
-                    if (!SELECTED_BLOCK_COLORS.containsKey(state.getBlock())) {
+                    if (!SELECTED_BLOCK_COLORS.containsKey(state.getBlock())
+                            || Config.isClientBlockBlacklisted(state)) {
                         continue;
                     }
                     rendered++;
@@ -311,7 +313,7 @@ final class XrayClientState {
         return SELECTED_BLOCK_COLORS.getOrDefault(block, DEFAULT_COLOR);
     }
 
-    private static void invalidateScan() {
+    static void invalidateScan() {
         scanLevel = null;
         MATCHES_BY_CHUNK.clear();
         nextChunkOffset = 0;

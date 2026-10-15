@@ -20,6 +20,10 @@ def artifactVersion = mod_version.toString().replaceFirst(/-forge1122$/, '')
 
 sourceCompatibility = targetCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8' // Need this here so eclipse task generates correctly.
 
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
 minecraft {
     // The mappings can be changed at any time, and must be in the following format.
     // snapshot_YYYYMMDD   Snapshot are built nightly.
@@ -55,6 +59,12 @@ minecraft {
     }
 }
 
+repositories {
+    maven {
+        url = 'https://cursemaven.com'
+    }
+}
+
 configurations {
     forge1122UniversalRunFix {
         transitive = false
@@ -64,6 +74,8 @@ configurations {
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
     forge1122UniversalRunFix "net.minecraftforge:forge:${minecraft_version}-${forge_version}:universal"
+    compileOnly fg.deobf('curse.maven:applied-energistics-2-223794:2747063')
+    testCompile 'org.ow2.asm:asm-debug-all:5.2'
 
     // You may put jars on which you depend on in ./libs or you may define them like so..
     // compile "some.group:artifact:version:classifier"
@@ -84,6 +96,48 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 
 }
+
+task startupRegression(type: JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'com.extrarawstyle.veinminerplus.startup.StartupRegression'
+    systemProperty 'java.awt.headless', 'true'
+    jvmArgs '-Xverify:all'
+    doFirst {
+        def cachedForge = new File(gradle.gradleUserHomeDir,
+                "caches/forge_gradle/maven_downloader/net/minecraftforge/forge/${minecraft_version}-${forge_version}/forge-${minecraft_version}-${forge_version}-universal.jar")
+        args((cachedForge.isFile() ? cachedForge : configurations.forge1122UniversalRunFix.singleFile).absolutePath,
+                new File(gradle.gradleUserHomeDir,
+                        'caches/forge_gradle/minecraft_repo/versions/1.12.2/client.jar').absolutePath)
+    }
+}
+
+check.dependsOn startupRegression
+
+task compatibilityRegression(type: JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'com.extrarawstyle.veinminerplus.CompatibilityRegression'
+    workingDir = file("$buildDir/compatibility-regression")
+    systemProperty 'java.awt.headless', 'true'
+    jvmArgs '-Xverify:all'
+    doFirst {
+        workingDir.mkdirs()
+        def compatibilityJars = project.findProperty('aeCompatibilityJars')
+        if (compatibilityJars) {
+            args compatibilityJars.toString().split(java.util.regex.Pattern.quote(File.pathSeparator))
+        } else {
+            ['appliedenergistics2-rv6-stable-7.jar', 'ae2-uel-v0.56.7.jar'].each { name ->
+                def downloaded = file("../.gradle/ae2-compat/downloads/${name}")
+                if (downloaded.isFile()) {
+                    args downloaded.absolutePath
+                }
+            }
+        }
+    }
+}
+
+check.dependsOn compatibilityRegression
 
 task extractForge1122SideForRun(type: Sync) {
     from { zipTree(configurations.forge1122UniversalRunFix.singleFile) }
@@ -124,7 +178,9 @@ jar {
             "Specification-Version": "1", // We are version 1 of ourselves
             "Implementation-Title": project.name,
             "Implementation-Version": "${version}",
-            "Implementation-Vendor" : mod_authors
+            "Implementation-Vendor" : mod_authors,
+            "FMLCorePlugin": "com.extrarawstyle.veinminerplus.startup.StartupLoadingPlugin",
+            "FMLCorePluginContainsFMLMod": "true"
         ])
     }
 }

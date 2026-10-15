@@ -5,6 +5,7 @@ import org.lwjgl.glfw.GLFW;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.InputEvent;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.client.event.RenderGuiEvent;
 import net.minecraftforge.event.TickEvent;
@@ -17,9 +18,18 @@ public final class VeinMinerPlusClientEvents {
     }
 
     @SubscribeEvent
+    public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
+        Config.resetClientBlacklist();
+    }
+
+    @SubscribeEvent
     public static void onKey(InputEvent.Key event) {
         if (VeinMinerPlusClient.handleWhitelistSelectionKey(event.getKey(), event.getScanCode(), event.getAction())) {
             return;
+        }
+
+        if (VeinMinerPlusClient.isAeStorageBypassKey(event.getKey(), event.getScanCode())) {
+            VeinMinerPlusClient.syncKeyState();
         }
 
         if (VeinMinerPlusClient.COPY_BLOCK_ID_KEY.matches(event.getKey(), event.getScanCode())) {

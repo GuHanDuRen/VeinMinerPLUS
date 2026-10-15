@@ -19,7 +19,7 @@ import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
 public class VeinMinerPlus {
     public static final String MODID = "veinminerplus";
     public static final String NAME = "VeinMinerPlus";
-    public static final String VERSION = "1.2.10-forge1122";
+    public static final String VERSION = "1.2.21-forge1122";
     public static final Logger LOGGER = LogManager.getLogger(MODID);
 
     @SidedProxy(clientSide = "com.extrarawstyle.veinminerplus.ClientProxy",

@@ -45,6 +45,8 @@ import net.minecraftforge.oredict.OreDictionary;
 public final class VeinMinerPlusClient {
     static final KeyBinding CHAIN_KEY = new KeyBinding("key.veinminerplus.chain", Keyboard.KEY_GRAVE,
             "key.categories.veinminerplus");
+    static final KeyBinding AE_STORAGE_BYPASS_KEY = new KeyBinding("key.veinminerplus.bypass_ae_storage",
+            Keyboard.KEY_LSHIFT, "key.categories.veinminerplus");
     static final KeyBinding COPY_BLOCK_ID_KEY = new KeyBinding("key.veinminerplus.copy_block_id",
             Keyboard.KEY_NONE, "key.categories.veinminerplus");
     static final KeyBinding COPY_ORE_TAGS_KEY = new KeyBinding("key.veinminerplus.copy_ore_tags",
@@ -65,10 +67,12 @@ public final class VeinMinerPlusClient {
     private static final int FINAL_PROGRESS_DISPLAY_TICKS = 20;
     private static final int LOW_TPS_NOTICE_DISPLAY_TICKS = 200;
     private static boolean keyStateSent;
+    private static boolean bypassAeStorageSent;
     private static boolean registered;
     private static VeinMinerConfigScreen whitelistSelectionScreen;
     private static VeinMinerConfigScreen pendingWhitelistSelectionReturn;
     private static boolean whitelistSelectionActive;
+    private static boolean blacklistSelection;
     private static int chainProgressCount;
     private static boolean chainProgressVisible;
     private static int chainProgressHideTicks;
@@ -89,9 +93,12 @@ public final class VeinMinerPlusClient {
                 lowTpsRadiusNoticeTicks = 0;
                 lastProgressSequence = -1;
                 keyStateSent = false;
+                bypassAeStorageSent = false;
                 whitelistSelectionScreen = null;
                 pendingWhitelistSelectionReturn = null;
                 whitelistSelectionActive = false;
+                blacklistSelection = false;
+                Config.resetClientBlacklist();
                 estimatedWorld = null;
                 estimatedOrigin = null;
                 estimatedBlock = null;
@@ -119,6 +126,7 @@ public final class VeinMinerPlusClient {
     static void registerKeyBinding() {
         if (!registered) {
             ClientRegistry.registerKeyBinding(CHAIN_KEY);
+            ClientRegistry.registerKeyBinding(AE_STORAGE_BYPASS_KEY);
             ClientRegistry.registerKeyBinding(COPY_BLOCK_ID_KEY);
             ClientRegistry.registerKeyBinding(COPY_ORE_TAGS_KEY);
             ClientRegistry.registerKeyBinding(WHITELIST_SELECT_KEY);
@@ -158,6 +166,10 @@ public final class VeinMinerPlusClient {
     }
 
     static void beginWhitelistSelection(VeinMinerConfigScreen screen) {
+        beginWhitelistSelection(screen, false);
+    }
+
+    static void beginWhitelistSelection(VeinMinerConfigScreen screen, boolean blacklist) {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (screen == null || minecraft.player == null || minecraft.world == null
                 || minecraft.currentScreen != screen) {
@@ -169,8 +181,11 @@ public final class VeinMinerPlusClient {
         }
         whitelistSelectionScreen = screen;
         whitelistSelectionActive = true;
+        blacklistSelection = blacklist;
         minecraft.displayGuiScreen(null);
-        showClipboardMessage(minecraft, "message.veinminerplus.whitelist_select_prompt");
+        showClipboardMessage(minecraft, blacklist
+                ? "message.veinminerplus.blacklist_select_prompt"
+                : "message.veinminerplus.whitelist_select_prompt");
     }
 
     private static void handleWhitelistSelectionInput() {
@@ -195,20 +210,30 @@ public final class VeinMinerPlusClient {
 
         IBlockState state = getAimedBlockState(minecraft);
         if (state == null) {
-            showClipboardMessage(minecraft, "message.veinminerplus.whitelist_select_no_block");
+            showClipboardMessage(minecraft, blacklistSelection
+                    ? "message.veinminerplus.blacklist_select_no_block"
+                    : "message.veinminerplus.whitelist_select_no_block");
             return;
         }
-        screen.addAimedWhitelistEntry(state);
+        if (blacklistSelection) {
+            screen.addAimedBlacklistEntry(state);
+        } else {
+            screen.addAimedWhitelistEntry(state);
+        }
         finishWhitelistSelection(true);
     }
 
     private static void finishWhitelistSelection(boolean confirmed) {
         VeinMinerConfigScreen screen = whitelistSelectionScreen;
+        boolean blacklist = blacklistSelection;
         whitelistSelectionScreen = null;
         whitelistSelectionActive = false;
+        blacklistSelection = false;
         Minecraft minecraft = Minecraft.getMinecraft();
         if (confirmed) {
-            showClipboardMessage(minecraft, "message.veinminerplus.whitelist_entry_added");
+            showClipboardMessage(minecraft, blacklist
+                    ? "message.veinminerplus.blacklist_entry_added"
+                    : "message.veinminerplus.whitelist_entry_added");
         }
         if (minecraft != null && screen != null) {
             pendingWhitelistSelectionReturn = screen;
@@ -292,9 +317,22 @@ public final class VeinMinerPlusClient {
         whitelistSelectionScreen = null;
         pendingWhitelistSelectionReturn = null;
         whitelistSelectionActive = false;
+        blacklistSelection = false;
         clientMode = ChainMode.fromOrdinal(config.mode);
         clientNormalLimit = config.maxNormalBlocks;
+        updateBlacklist(config.blockBlacklist);
         Minecraft.getMinecraft().displayGuiScreen(new VeinMinerConfigScreen(config));
+    }
+
+    static void updateBlacklist(String text) {
+        Config.setClientBlacklist(text);
+        estimatedWorld = null;
+        estimatedOrigin = null;
+        estimatedBlock = null;
+        estimatedCount = 0;
+        estimatedInteractionCount = 0;
+        estimatedContainer = false;
+        estimatedFaceAxis = null;
     }
 
     static void setClientMode(ChainMode mode) {
@@ -409,16 +447,21 @@ public final class VeinMinerPlusClient {
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean held = minecraft.player != null && minecraft.world != null && minecraft.currentScreen == null
                 && CHAIN_KEY.isKeyDown();
-        if (held != keyStateSent) {
-            NetworkHandler.sendKeyState(held);
+        boolean bypassAeStorage = held && (AE_STORAGE_BYPASS_KEY.isKeyDown()
+                || (AE_STORAGE_BYPASS_KEY.getKeyCode() == Keyboard.KEY_LSHIFT
+                        && Keyboard.isKeyDown(Keyboard.KEY_RSHIFT)));
+        if (held != keyStateSent || bypassAeStorage != bypassAeStorageSent) {
+            NetworkHandler.sendKeyState(held, bypassAeStorage);
             keyStateSent = held;
+            bypassAeStorageSent = bypassAeStorage;
         }
     }
 
     static void releaseKeyState() {
-        if (keyStateSent) {
-            NetworkHandler.sendKeyState(false);
+        if (keyStateSent || bypassAeStorageSent) {
+            NetworkHandler.sendKeyState(false, false);
             keyStateSent = false;
+            bypassAeStorageSent = false;
         }
     }
 
@@ -484,10 +527,12 @@ public final class VeinMinerPlusClient {
     }
 
     private static Object interactionEstimate() {
-        if (estimatedContainer || estimatedOrigin == null || estimatedBlock == Blocks.AIR) {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (estimatedContainer || estimatedOrigin == null || estimatedBlock == Blocks.AIR
+                || minecraft.world == null
+                || Config.isClientBlockBlacklisted(minecraft.world.getBlockState(estimatedOrigin))) {
             return Integer.valueOf(estimatedInteractionCount);
         }
-        Minecraft minecraft = Minecraft.getMinecraft();
         return minecraft.player != null
                 && (!minecraft.player.getHeldItemMainhand().isEmpty()
                         || !minecraft.player.getHeldItemOffhand().isEmpty()) ? "?" : Integer.valueOf(0);
@@ -523,7 +568,7 @@ public final class VeinMinerPlusClient {
         estimatedCount = 0;
         estimatedInteractionCount = 0;
         estimatedContainer = false;
-        if (target == Blocks.AIR) {
+        if (target == Blocks.AIR || Config.isClientBlockBlacklisted(minecraft.world.getBlockState(origin))) {
             return;
         }
 
@@ -554,7 +599,8 @@ public final class VeinMinerPlusClient {
                         }
                         BlockPos candidate = center.add(x, y, z);
                         if (seen.add(candidate) && world.isBlockLoaded(candidate)
-                                && world.getBlockState(candidate).getBlock() == target) {
+                                && world.getBlockState(candidate).getBlock() == target
+                                && !Config.isClientBlockBlacklisted(world.getBlockState(candidate))) {
                             frontier.addLast(candidate);
                             count++;
                         }

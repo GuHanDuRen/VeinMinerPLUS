@@ -30,9 +30,11 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
@@ -45,6 +47,11 @@ public final class VeinMinerPlusClient {
             "key.veinminerplus.chain",
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_GRAVE_ACCENT,
+            "key.categories.veinminerplus");
+    private static final KeyMapping AE_STORAGE_BYPASS_KEY = new KeyMapping(
+            "key.veinminerplus.bypass_ae_storage",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_LEFT_SHIFT,
             "key.categories.veinminerplus");
     private static final KeyMapping COPY_BLOCK_ID_KEY = new KeyMapping(
             "key.veinminerplus.copy_block_id",
@@ -77,6 +84,7 @@ public final class VeinMinerPlusClient {
     private static boolean estimatedContainer;
     private static Direction.Axis estimatedFaceAxis;
     private static boolean keyStateSent;
+    private static boolean bypassAeStorageSent;
     private static VeinMinerConfigScreen whitelistSelectionScreen;
     private static VeinMinerConfigScreen pendingWhitelistSelectionReturn;
     private static Component blastRadiusReductionNotice;
@@ -84,11 +92,13 @@ public final class VeinMinerPlusClient {
 
     public VeinMinerPlusClient(IEventBus modEventBus, ModContainer container) {
         modEventBus.addListener(VeinMinerPlusClient::registerKeyMappings);
+        container.registerConfig(ModConfig.Type.CLIENT, ClientConfig.SPEC);
         container.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
     }
 
     private static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(CHAIN_KEY);
+        event.register(AE_STORAGE_BYPASS_KEY);
         event.register(COPY_BLOCK_ID_KEY);
         event.register(COPY_ORE_TAGS_KEY);
         event.register(WHITELIST_SELECT_KEY);
@@ -122,6 +132,12 @@ public final class VeinMinerPlusClient {
                 Minecraft.getInstance().setScreen(new XraySelectionScreen());
             }
             return;
+        }
+
+        if (AE_STORAGE_BYPASS_KEY.matches(event.getKey(), event.getScanCode())
+                || (AE_STORAGE_BYPASS_KEY.getKey().getValue() == GLFW.GLFW_KEY_LEFT_SHIFT
+                        && event.getKey() == GLFW.GLFW_KEY_RIGHT_SHIFT)) {
+            syncKeyState();
         }
 
         if (!CHAIN_KEY.matches(event.getKey(), event.getScanCode())) {
@@ -208,7 +224,25 @@ public final class VeinMinerPlusClient {
         pendingWhitelistSelectionReturn = null;
         clientMode = ChainMode.fromOrdinal(config.mode());
         clientNormalLimit = config.maxNormalBlocks();
+        syncBlacklist(config.blockBlacklist());
         Minecraft.getInstance().setScreen(new VeinMinerConfigScreen(config));
+    }
+
+    static void syncBlacklist(String text) {
+        Config.setClientBlacklist(text);
+        estimatedLevel = null;
+        estimatedCount = 0;
+        estimatedInteractionCount = 0;
+        XrayClientState.invalidateScan();
+    }
+
+    @SubscribeEvent
+    public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        Config.resetClientBlacklist();
+        estimatedLevel = null;
+        whitelistSelectionScreen = null;
+        pendingWhitelistSelectionReturn = null;
+        XrayClientState.invalidateScan();
     }
 
     static void showBlastRadiusReduced(double tps, int oldDistance, int newDistance) {
@@ -261,7 +295,9 @@ public final class VeinMinerPlusClient {
         screen.captureDraftValues();
         whitelistSelectionScreen = screen;
         minecraft.setScreen(null);
-        showClipboardMessage(minecraft, "message.veinminerplus.whitelist_select_prompt");
+        showClipboardMessage(minecraft, screen.isBlacklistSelection()
+                ? "message.veinminerplus.blacklist_select_prompt"
+                : "message.veinminerplus.whitelist_select_prompt");
     }
 
     static boolean handleWhitelistSelectionKey(int key, int scanCode, int action) {
@@ -273,7 +309,9 @@ public final class VeinMinerPlusClient {
         }
 
         if (key == GLFW.GLFW_KEY_ESCAPE) {
-            queueWhitelistSelectionReturn("message.veinminerplus.whitelist_select_cancelled");
+            queueWhitelistSelectionReturn(whitelistSelectionScreen.isBlacklistSelection()
+                    ? "message.veinminerplus.blacklist_select_cancelled"
+                    : "message.veinminerplus.whitelist_select_cancelled");
         } else if (WHITELIST_SELECT_KEY.matches(key, scanCode)
                 || (WHITELIST_SELECT_KEY.getKey().getValue() == GLFW.GLFW_KEY_ENTER
                         && key == GLFW.GLFW_KEY_KP_ENTER)) {
@@ -296,7 +334,9 @@ public final class VeinMinerPlusClient {
         }
 
         screen.addAimedWhitelistEntry(state);
-        queueWhitelistSelectionReturn("message.veinminerplus.whitelist_entry_added");
+        queueWhitelistSelectionReturn(screen.isBlacklistSelection()
+                ? "message.veinminerplus.blacklist_entry_added"
+                : "message.veinminerplus.whitelist_entry_added");
     }
 
     private static void queueWhitelistSelectionReturn(String messageKey) {
@@ -378,13 +418,18 @@ public final class VeinMinerPlusClient {
     }
 
     private static void syncKeyState() {
-        boolean held = isChainKeyActive(Minecraft.getInstance());
-        if (held == keyStateSent) {
+        Minecraft minecraft = Minecraft.getInstance();
+        boolean held = isChainKeyActive(minecraft);
+        boolean bypassAeStorage = held && (AE_STORAGE_BYPASS_KEY.isDown()
+                || (AE_STORAGE_BYPASS_KEY.getKey().getValue() == GLFW.GLFW_KEY_LEFT_SHIFT
+                        && InputConstants.isKeyDown(minecraft.getWindow().getWindow(), GLFW.GLFW_KEY_RIGHT_SHIFT)));
+        if (held == keyStateSent && bypassAeStorage == bypassAeStorageSent) {
             return;
         }
 
-        NetworkHandler.sendKeyState(held);
+        NetworkHandler.sendKeyState(held, bypassAeStorage);
         keyStateSent = held;
+        bypassAeStorageSent = bypassAeStorage;
     }
 
     private static void releaseKeyState() {
@@ -392,8 +437,9 @@ public final class VeinMinerPlusClient {
             return;
         }
 
-        NetworkHandler.sendKeyState(false);
+        NetworkHandler.sendKeyState(false, false);
         keyStateSent = false;
+        bypassAeStorageSent = false;
     }
 
     private static boolean isModeSelectorOpen() {
@@ -450,6 +496,9 @@ public final class VeinMinerPlusClient {
     }
 
     private static Object interactionEstimate() {
+        if (estimatedBlock != null && Config.isClientBlockBlacklisted(estimatedBlock.defaultBlockState())) {
+            return 0;
+        }
         if (estimatedContainer || estimatedOrigin == null || estimatedBlock.defaultBlockState().isAir()) {
             return estimatedInteractionCount;
         }
@@ -485,7 +534,8 @@ public final class VeinMinerPlusClient {
         estimatedCount = 0;
         estimatedInteractionCount = 0;
         estimatedContainer = false;
-        if (target.defaultBlockState().isAir()) {
+        if (target.defaultBlockState().isAir()
+                || Config.isClientBlockBlacklisted(minecraft.level.getBlockState(origin))) {
             return;
         }
 
@@ -517,7 +567,8 @@ public final class VeinMinerPlusClient {
                         }
                         BlockPos candidate = center.offset(x, y, z);
                         if (seen.add(candidate) && level.hasChunkAt(candidate)
-                                && level.getBlockState(candidate).is(target)) {
+                                && level.getBlockState(candidate).is(target)
+                                && !Config.isClientBlockBlacklisted(level.getBlockState(candidate))) {
                             frontier.addLast(candidate);
                             count++;
                         }

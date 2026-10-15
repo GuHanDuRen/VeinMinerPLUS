@@ -8,6 +8,7 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Renderable;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -19,13 +20,13 @@ public final class VeinMinerConfigScreen extends Screen {
     private static final int CONTROL_HEIGHT = 20;
     private static final int SECTION_HEADER_HEIGHT = 20;
     private static final int WHITELIST_VISIBLE_ROWS = 5;
-    private static final int WHITELIST_MAX_ROWS = Config.MAX_WHITELIST_ENTRIES + 1;
+    private static final int WHITELIST_MAX_ROWS = Config.MAX_WHITELIST_ENTRIES;
     private static final int WHITELIST_CONTROL_GAP = 4;
     private static final int WHITELIST_CONTROL_WIDTH = 20;
     private static final int PANEL_COLOR = 0xF018242D;
-    private static final int PANEL_BORDER_COLOR = 0xFF2B414C;
+    private static final int PANEL_BORDER_COLOR = 0xFF52636B;
     private static final int HEADER_COLOR = 0xFF1D3039;
-    private static final int ACCENT_COLOR = 0xFF59D8BC;
+    private static final int ACCENT_COLOR = 0xFF9AB4AB;
     private static final int TEXT_COLOR = 0xFFE5EEF2;
     private static final int MUTED_TEXT_COLOR = 0xFF96ADB7;
 
@@ -37,18 +38,9 @@ public final class VeinMinerConfigScreen extends Screen {
     private final List<Renderable> contentRenderables = new ArrayList<>();
     private final List<Renderable> footerRenderables = new ArrayList<>();
     private final List<String> draftValues = new ArrayList<>();
-    private final List<EditBox> whitelistRows = new ArrayList<>();
-    private final List<Button> whitelistRemoveButtons = new ArrayList<>();
-    private int whitelistLineCount;
-    private int whitelistScrollRow;
-    private String whitelistDraft;
-    private int whitelistBaseY;
-    private int whitelistViewportBottom;
-    private int whitelistX;
-    private int whitelistWidth;
-    private int whitelistRemoveX;
-    private int whitelistLabelX;
-    private int whitelistLabelWidth;
+    private final RuleListEditor whitelist = new RuleListEditor("screen.veinminerplus.config.whitelist", true);
+    private final RuleListEditor blacklist = new RuleListEditor("screen.veinminerplus.config.blacklist", false);
+    private RuleListEditor selectionEditor = whitelist;
     private boolean manhattan;
     private boolean autoReduceRadius;
     private boolean consumeHunger;
@@ -116,12 +108,14 @@ public final class VeinMinerConfigScreen extends Screen {
         int performanceHeight = headerHeight + rowHeight * (compactGrid ? 1 : 2) + sectionPadding;
         int playerHeight = headerHeight + rowHeight * (compactGrid ? 2 : 3) + sectionPadding
                 + (WHITELIST_VISIBLE_ROWS - 1) * WHITELIST_ROW_HEIGHT;
+        int blacklistHeight = headerHeight + WHITELIST_VISIBLE_ROWS * WHITELIST_ROW_HEIGHT + sectionPadding;
 
         int normalY = top;
         int blastY = normalY + normalHeight + sectionGap;
         int performanceY = blastY + blastHeight + sectionGap;
         int playerY = performanceY + performanceHeight + sectionGap;
-        int contentBottom = playerY + playerHeight;
+        int blacklistY = playerY + playerHeight + sectionGap;
+        int contentBottom = blacklistY + blacklistHeight;
         maxScroll = Math.max(0, contentBottom - viewportBottom);
         scrollOffset = Mth.clamp(scrollOffset, 0.0D, (double) maxScroll);
 
@@ -133,6 +127,8 @@ public final class VeinMinerConfigScreen extends Screen {
                 "screen.veinminerplus.config.section.performance"));
         sections.add(new SectionArea(panelX, playerY, panelWidth, playerHeight,
                 "screen.veinminerplus.config.section.player"));
+        sections.add(new SectionArea(panelX, blacklistY, panelWidth, blacklistHeight,
+                "screen.veinminerplus.config.section.blacklist"));
 
         int normalRow = normalY + headerHeight;
         addField("screen.veinminerplus.config.normal_limit", initial.maxNormalBlocks(), 32, Integer.MAX_VALUE,
@@ -191,22 +187,9 @@ public final class VeinMinerConfigScreen extends Screen {
                 compactGrid ? behaviorRow : behaviorRow + rowHeight, cellWidth, 20,
                 "screen.veinminerplus.config.mode.description"));
 
-        whitelistBaseY = behaviorRow + (compactGrid ? rowHeight : rowHeight * 2);
-        whitelistViewportBottom = whitelistBaseY + WHITELIST_VISIBLE_ROWS * WHITELIST_ROW_HEIGHT;
-        whitelistLabelX = contentX + 4;
-        whitelistLabelWidth = Math.min(132, Math.max(76, contentWidth / 3));
-        whitelistX = contentX + whitelistLabelWidth;
-        whitelistWidth = Math.max(40,
-                contentWidth - whitelistLabelWidth - WHITELIST_CONTROL_WIDTH * 2 - WHITELIST_CONTROL_GAP * 2);
-        whitelistRemoveX = whitelistX + whitelistWidth + WHITELIST_CONTROL_GAP;
-        initializeWhitelistRows();
-        int whitelistAddX = whitelistRemoveX + WHITELIST_CONTROL_WIDTH + WHITELIST_CONTROL_GAP;
-        addContentButton(Button.builder(Component.literal("+"), button -> beginWhitelistSelection())
-                .bounds(whitelistAddX, whitelistBaseY, WHITELIST_CONTROL_WIDTH, CONTROL_HEIGHT).build(StyledButton::new),
-                whitelistBaseY);
-        helpAreas.add(new HelpArea(contentX, whitelistBaseY, contentWidth,
-                WHITELIST_VISIBLE_ROWS * WHITELIST_ROW_HEIGHT,
-                "screen.veinminerplus.config.whitelist.description"));
+        whitelist.initialize(contentX, behaviorRow + (compactGrid ? rowHeight : rowHeight * 2),
+                contentWidth, initial.blockWhitelist());
+        blacklist.initialize(contentX, blacklistY + headerHeight, contentWidth, initial.blockBlacklist());
 
         int footerGap = 6;
         int actionWidth = Math.min(104, Math.max(64, (width - 24 - footerGap * 2) / 3));
@@ -226,104 +209,10 @@ public final class VeinMinerConfigScreen extends Screen {
         footerRenderables.add(cancelButton);
         draftValues.clear();
         layoutContentWidgets();
+        updateSaveButton();
     }
 
-    private void initializeWhitelistRows() {
-        String source = whitelistDraft != null ? whitelistDraft : initial.blockWhitelist();
-        if (source == null || source.trim().isEmpty()) {
-            source = Config.whitelistText();
-        }
-
-        List<String> lines = new ArrayList<>();
-        for (String line : (source == null ? "" : source).replace("\r\n", "\n")
-                .split("[,;\\r\\n]", -1)) {
-            if (!line.trim().isEmpty()) {
-                lines.add(line.trim());
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add("*ore");
-        }
-        if (lines.size() < WHITELIST_MAX_ROWS) {
-            lines.add("");
-        }
-        whitelistLineCount = Math.min(WHITELIST_MAX_ROWS, lines.size());
-
-        for (EditBox row : whitelistRows) {
-            removeWidget(row);
-        }
-        for (Button button : whitelistRemoveButtons) {
-            removeWidget(button);
-        }
-        whitelistRows.clear();
-        whitelistRemoveButtons.clear();
-        for (int index = 0; index < WHITELIST_MAX_ROWS; index++) {
-            EditBox row = new StyledEditBox(whitelistX, whitelistBaseY, whitelistWidth, CONTROL_HEIGHT,
-                    Component.translatable("screen.veinminerplus.config.whitelist"));
-            row.setMaxLength(Config.MAX_WHITELIST_ENTRY_LENGTH);
-            row.setValue(index < whitelistLineCount ? lines.get(index) : "");
-            addRenderableWidget(row);
-            contentRenderables.add(row);
-            whitelistRows.add(row);
-
-            int rowIndex = index;
-            Button removeButton = Button.builder(Component.literal("-"), button -> removeWhitelistEntry(rowIndex))
-                    .bounds(whitelistRemoveX, whitelistBaseY, WHITELIST_CONTROL_WIDTH, CONTROL_HEIGHT)
-                    .build(StyledButton::new);
-            addRenderableWidget(removeButton);
-            contentRenderables.add(removeButton);
-            whitelistRemoveButtons.add(removeButton);
-        }
-        whitelistScrollRow = Math.min(whitelistScrollRow, maxWhitelistScroll());
-        layoutWhitelistRows();
-    }
-
-    private int maxWhitelistScroll() {
-        return Math.max(0, whitelistLineCount - WHITELIST_VISIBLE_ROWS);
-    }
-
-    private void captureWhitelistDraft() {
-        if (whitelistRows.isEmpty()) {
-            return;
-        }
-        List<String> lines = new ArrayList<>();
-        for (int index = 0; index < whitelistLineCount; index++) {
-            lines.add(whitelistRows.get(index).getValue());
-        }
-        whitelistDraft = joinWhitelistLines(lines);
-    }
-
-    private String whitelistText() {
-        captureWhitelistDraft();
-        return whitelistDraft == null ? "" : whitelistDraft;
-    }
-
-    private void setWhitelistLines(List<String> values) {
-        List<String> lines = new ArrayList<>();
-        if (values != null) {
-            for (String value : values) {
-                if (value != null && !value.trim().isEmpty()) {
-                    lines.add(value.trim());
-                }
-                if (lines.size() >= Config.MAX_WHITELIST_ENTRIES) {
-                    break;
-                }
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add("*ore");
-        }
-        lines.add("");
-        whitelistLineCount = Math.min(WHITELIST_MAX_ROWS, lines.size());
-        whitelistDraft = joinWhitelistLines(lines);
-        for (int index = 0; index < whitelistRows.size(); index++) {
-            whitelistRows.get(index).setValue(index < whitelistLineCount ? lines.get(index) : "");
-        }
-        whitelistScrollRow = Math.min(whitelistScrollRow, maxWhitelistScroll());
-        layoutWhitelistRows();
-    }
-
-    private static String joinWhitelistLines(List<String> values) {
+    private static String joinRuleLines(List<String> values) {
         StringBuilder result = new StringBuilder();
         for (String value : values) {
             if (result.length() > 0) {
@@ -341,44 +230,42 @@ public final class VeinMinerConfigScreen extends Screen {
                 draftValues.add(field.box().getValue());
             }
         }
-        captureWhitelistDraft();
+        whitelist.captureDraft();
+        blacklist.captureDraft();
     }
 
-    private void beginWhitelistSelection() {
+    private void beginRuleSelection(RuleListEditor editor) {
+        selectionEditor = editor;
         VeinMinerPlusClient.beginWhitelistSelection(this);
     }
 
+    boolean isBlacklistSelection() {
+        return selectionEditor == blacklist;
+    }
+
     void addAimedWhitelistEntry(BlockState state) {
-        String current = whitelistText();
+        String current = selectionEditor.text();
         List<String> entries = new ArrayList<>(Config.parseWhitelistText(current == null ? "" : current));
-        if (entries.isEmpty()) {
+        if (entries.size() >= Config.MAX_WHITELIST_ENTRIES) {
+            return;
+        }
+        if (selectionEditor == whitelist && entries.isEmpty()) {
             entries.add("*ore");
         }
         int originalSize = entries.size();
-        state.getTags().filter(tag -> tag.location().getPath().contains("ore"))
-                .forEach(tag -> entries.add("#" + tag.location()));
+        if (selectionEditor == whitelist) {
+            state.getTags().filter(tag -> tag.location().getPath().contains("ore"))
+                    .forEach(tag -> entries.add("#" + tag.location()));
+        }
         if (entries.size() == originalSize) {
             var id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
             if (id != null) {
                 entries.add(id.toString());
             }
         }
-        setWhitelistLines(Config.normalizeWhitelist(entries));
-        whitelistScrollRow = maxWhitelistScroll();
-        layoutWhitelistRows();
-    }
-
-    private void removeWhitelistEntry(int rowIndex) {
-        if (rowIndex < 0 || rowIndex >= whitelistLineCount) {
-            return;
-        }
-
-        List<String> lines = new ArrayList<>();
-        for (int index = 0; index < whitelistLineCount; index++) {
-            lines.add(whitelistRows.get(index).getValue());
-        }
-        lines.remove(rowIndex);
-        setWhitelistLines(lines);
+        selectionEditor.setLines(Config.normalizeWhitelist(entries));
+        selectionEditor.scrollRow = selectionEditor.maxScroll();
+        selectionEditor.layoutRows();
     }
 
     private void resetDefaults() {
@@ -398,11 +285,13 @@ public final class VeinMinerConfigScreen extends Screen {
         autoReduceRadius = Config.DEFAULT_BLAST_AUTO_REDUCE_RADIUS;
         consumeHunger = Config.DEFAULT_CONSUME_HUNGER;
         mode = ChainMode.fromOrdinal(Config.DEFAULT_MODE_ORDINAL);
-        setWhitelistLines(Config.DEFAULT_BLOCK_WHITELIST);
+        whitelist.setLines(Config.DEFAULT_BLOCK_WHITELIST);
+        blacklist.setLines(Config.DEFAULT_BLOCK_BLACKLIST);
         manhattanButton.setMessage(toggleText("screen.veinminerplus.config.manhattan", manhattan));
         autoReduceRadiusButton.setMessage(toggleText("screen.veinminerplus.config.auto_radius", autoReduceRadius));
         consumeHungerButton.setMessage(toggleText("screen.veinminerplus.config.consume_hunger", consumeHunger));
         modeButton.setMessage(modeText());
+        updateSaveButton();
     }
 
     private void addField(String translationKey, int value, int min, int max, int x, int baseY, int cellWidth) {
@@ -437,6 +326,20 @@ public final class VeinMinerConfigScreen extends Screen {
                 Component.translatable(mode.translationKey()));
     }
 
+    private void updateSaveButton() {
+        whitelist.updateSelectionButton();
+        blacklist.updateSelectionButton();
+        if (doneButton == null) {
+            return;
+        }
+        doneButton.active = String.join("\n", Config.parseWhitelistText(whitelist.text())).length()
+                <= NetworkHandler.MAX_WHITELIST_TEXT_LENGTH
+                && String.join("\n", Config.parseWhitelistText(blacklist.text())).length()
+                <= NetworkHandler.MAX_WHITELIST_TEXT_LENGTH;
+        doneButton.setTooltip(doneButton.active ? null : Tooltip.create(Component.translatable(
+                "screen.veinminerplus.config.rules_too_long", NetworkHandler.MAX_WHITELIST_TEXT_LENGTH)));
+    }
+
     private void save() {
         int normalBlocks = parse(fields.get(0).box(), initial.maxNormalBlocks(), 32, Integer.MAX_VALUE);
         int normalPerTick = parse(fields.get(1).box(), initial.maxNormalBlocksPerTick(), 1, Integer.MAX_VALUE);
@@ -446,10 +349,16 @@ public final class VeinMinerConfigScreen extends Screen {
         int scanPerTick = parse(fields.get(5).box(), initial.blastChunkScansPerTick(), 1,
                 Config.MAX_BLAST_CHUNK_SCANS_PER_TICK);
         int lowTps = parse(fields.get(6).box(), initial.blastLowTpsThreshold(), 5, 20);
-        String whitelist = String.join("\n", Config.parseWhitelistText(whitelistText()));
+        String whitelistText = String.join("\n", Config.parseWhitelistText(whitelist.text()));
+        String blacklistText = String.join("\n", Config.parseWhitelistText(blacklist.text()));
+        if (whitelistText.length() > NetworkHandler.MAX_WHITELIST_TEXT_LENGTH
+                || blacklistText.length() > NetworkHandler.MAX_WHITELIST_TEXT_LENGTH) {
+            updateSaveButton();
+            return;
+        }
         NetworkHandler.sendConfigUpdate(new NetworkHandler.ConfigUpdatePayload(normalBlocks, normalPerTick,
                 blastBlocks, blastPerTick, distance, scanPerTick, lowTps, manhattan, autoReduceRadius,
-                consumeHunger, mode.id(), whitelist));
+                consumeHunger, mode.id(), whitelistText, blacklistText));
         VeinMinerPlusClient.setClientMode(mode);
         onClose();
     }
@@ -467,57 +376,13 @@ public final class VeinMinerConfigScreen extends Screen {
         for (PositionedWidget positioned : contentWidgets) {
             positioned.widget().setY(positioned.baseY() - offset);
         }
-        layoutWhitelistRows();
-    }
-
-    private void layoutWhitelistRows() {
-        int outerOffset = (int) Math.round(scrollOffset);
-        int innerOffset = whitelistScrollRow * WHITELIST_ROW_HEIGHT;
-        for (int index = 0; index < whitelistRows.size(); index++) {
-            EditBox row = whitelistRows.get(index);
-            Button removeButton = whitelistRemoveButtons.get(index);
-            int y = whitelistBaseY + index * WHITELIST_ROW_HEIGHT - innerOffset - outerOffset;
-            row.setX(whitelistX);
-            row.setY(y);
-            removeButton.setX(whitelistRemoveX);
-            removeButton.setY(y);
-            boolean visible = index < whitelistLineCount
-                    && y + WHITELIST_ROW_HEIGHT > viewportTop
-                    && y < viewportBottom
-                    && y + WHITELIST_ROW_HEIGHT > whitelistBaseY - outerOffset
-                    && y < whitelistViewportBottom - outerOffset;
-            row.setVisible(visible);
-            removeButton.visible = visible;
-            removeButton.active = visible;
-        }
-    }
-
-    private boolean insideWhitelistViewport(double mouseX, double mouseY) {
-        int outerOffset = (int) Math.round(scrollOffset);
-        int top = whitelistBaseY - outerOffset;
-        int bottom = whitelistViewportBottom - outerOffset;
-        return mouseX >= whitelistX && mouseX < whitelistRemoveX + WHITELIST_CONTROL_WIDTH
-                && mouseY >= top && mouseY < bottom
-                && mouseY >= viewportTop && mouseY < viewportBottom;
-    }
-
-    private boolean scrollWhitelist(double delta) {
-        if (delta == 0.0D || maxWhitelistScroll() <= 0) {
-            return false;
-        }
-        int direction = delta > 0.0D ? -1 : 1;
-        int next = Mth.clamp(whitelistScrollRow + direction, 0, maxWhitelistScroll());
-        if (next == whitelistScrollRow) {
-            return false;
-        }
-        captureWhitelistDraft();
-        whitelistScrollRow = next;
-        layoutWhitelistRows();
-        return true;
+        whitelist.layoutRows();
+        blacklist.layoutRows();
     }
 
     private boolean scrollContent(double mouseX, double mouseY, double delta) {
-        if (insideWhitelistViewport(mouseX, mouseY) && scrollWhitelist(delta)) {
+        if ((whitelist.insideViewport(mouseX, mouseY) && whitelist.scroll(delta))
+                || (blacklist.insideViewport(mouseX, mouseY) && blacklist.scroll(delta))) {
             return true;
         }
         if (!insideContentViewport(mouseX, mouseY) || maxScroll <= 0 || delta == 0.0D) {
@@ -582,8 +447,10 @@ public final class VeinMinerConfigScreen extends Screen {
         for (LabeledField field : fields) {
             drawFieldLabel(graphics, field);
         }
-        drawWhitelistLabel(graphics);
-        drawWhitelistScrollbar(graphics);
+        whitelist.drawLabel(graphics);
+        whitelist.drawScrollbar(graphics);
+        blacklist.drawLabel(graphics);
+        blacklist.drawScrollbar(graphics);
         graphics.disableScissor();
 
         graphics.fill(panelX, height - 32, panelX + panelWidth, height, 0xED101820);
@@ -630,37 +497,6 @@ public final class VeinMinerConfigScreen extends Screen {
                 TEXT_COLOR, false);
     }
 
-    private void drawWhitelistLabel(GuiGraphics graphics) {
-        if (whitelistRows.isEmpty()) {
-            return;
-        }
-        int offset = (int) Math.round(scrollOffset);
-        int y = whitelistBaseY - offset;
-        String label = Component.translatable("screen.veinminerplus.config.whitelist").getString();
-        graphics.drawString(font, font.plainSubstrByWidth(label, whitelistLabelWidth), whitelistLabelX, y + 6,
-                TEXT_COLOR, false);
-    }
-
-    private void drawWhitelistScrollbar(GuiGraphics graphics) {
-        int max = maxWhitelistScroll();
-        if (max <= 0) {
-            return;
-        }
-        int outerOffset = (int) Math.round(scrollOffset);
-        int top = Math.max(viewportTop, whitelistBaseY - outerOffset);
-        int bottom = Math.min(viewportBottom, whitelistViewportBottom - outerOffset);
-        if (bottom <= top) {
-            return;
-        }
-        int trackX = whitelistX + whitelistWidth + 2;
-        int trackHeight = bottom - top;
-        int thumbHeight = Math.max(12, trackHeight * WHITELIST_VISIBLE_ROWS / whitelistLineCount);
-        int travel = Math.max(0, trackHeight - thumbHeight);
-        int thumbY = top + (int) Math.round(travel * (double) whitelistScrollRow / max);
-        graphics.fill(trackX, top, trackX + 2, bottom, PANEL_BORDER_COLOR);
-        graphics.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, ACCENT_COLOR);
-    }
-
     private void drawHeader(GuiGraphics graphics) {
         graphics.fill(panelX, 6, panelX + panelWidth, 40, 0xED101820);
         graphics.fill(panelX, 6, panelX + 3, 40, ACCENT_COLOR);
@@ -687,6 +523,218 @@ public final class VeinMinerConfigScreen extends Screen {
     private static void drawFrame(GuiGraphics graphics, int x, int y, int width, int height, int fill, int border) {
         graphics.fill(x, y, x + width, y + height, border);
         graphics.fill(x + 1, y + 1, x + width - 1, y + height - 1, fill);
+    }
+
+    private final class RuleListEditor {
+        private final String translationKey;
+        private final boolean defaultOre;
+        private final List<EditBox> rows = new ArrayList<>();
+        private final List<Button> removeButtons = new ArrayList<>();
+        private Button selectionButton;
+        private int lineCount;
+        private int scrollRow;
+        private String draft;
+        private int baseY;
+        private int bottom;
+        private int x;
+        private int width;
+        private int removeX;
+        private int labelX;
+        private int labelWidth;
+
+        private RuleListEditor(String translationKey, boolean defaultOre) {
+            this.translationKey = translationKey;
+            this.defaultOre = defaultOre;
+        }
+
+        private void initialize(int contentX, int y, int contentWidth, String initialText) {
+            baseY = y;
+            bottom = baseY + WHITELIST_VISIBLE_ROWS * WHITELIST_ROW_HEIGHT;
+            labelX = contentX + 4;
+            labelWidth = Math.min(132, Math.max(76, contentWidth / 3));
+            x = contentX + labelWidth;
+            width = Math.max(40,
+                    contentWidth - labelWidth - WHITELIST_CONTROL_WIDTH * 2 - WHITELIST_CONTROL_GAP * 2);
+            removeX = x + width + WHITELIST_CONTROL_GAP;
+            String source = draft != null ? draft : initialText;
+            if (defaultOre && (source == null || source.trim().isEmpty())) {
+                source = Config.whitelistText();
+            }
+            List<String> lines = new ArrayList<>();
+            for (String line : (source == null ? "" : source).split("[,;\\r\\n]", -1)) {
+                if (!line.trim().isEmpty()) {
+                    lines.add(line.trim());
+                }
+            }
+
+            for (EditBox row : rows) {
+                removeWidget(row);
+            }
+            for (Button button : removeButtons) {
+                removeWidget(button);
+            }
+            rows.clear();
+            removeButtons.clear();
+            for (int index = 0; index < WHITELIST_MAX_ROWS; index++) {
+                EditBox row = new StyledEditBox(x, baseY, width, CONTROL_HEIGHT,
+                        Component.translatable(translationKey));
+                row.setMaxLength(Config.MAX_WHITELIST_ENTRY_LENGTH);
+                addRenderableWidget(row);
+                contentRenderables.add(row);
+                rows.add(row);
+
+                int rowIndex = index;
+                Button removeButton = Button.builder(Component.literal("-"), button -> removeEntry(rowIndex))
+                        .bounds(removeX, baseY, WHITELIST_CONTROL_WIDTH, CONTROL_HEIGHT).build(StyledButton::new);
+                addRenderableWidget(removeButton);
+                contentRenderables.add(removeButton);
+                removeButtons.add(removeButton);
+            }
+            setLines(lines);
+            for (int index = 0; index < rows.size(); index++) {
+                int rowIndex = index;
+                rows.get(index).setResponder(value -> {
+                    if (rowIndex == lineCount - 1 && !value.isBlank() && lineCount < WHITELIST_MAX_ROWS) {
+                        lineCount++;
+                        layoutRows();
+                    }
+                    updateSaveButton();
+                });
+            }
+            int addX = removeX + WHITELIST_CONTROL_WIDTH + WHITELIST_CONTROL_GAP;
+            selectionButton = addContentButton(Button.builder(Component.literal("+"), button -> beginRuleSelection(this))
+                    .bounds(addX, baseY, WHITELIST_CONTROL_WIDTH, CONTROL_HEIGHT).build(StyledButton::new), baseY);
+            updateSelectionButton();
+            helpAreas.add(new HelpArea(contentX, baseY, contentWidth,
+                    WHITELIST_VISIBLE_ROWS * WHITELIST_ROW_HEIGHT, translationKey + ".description"));
+        }
+
+        private List<String> values() {
+            List<String> values = new ArrayList<>();
+            for (int index = 0; index < lineCount; index++) {
+                values.add(rows.get(index).getValue());
+            }
+            return values;
+        }
+
+        private void captureDraft() {
+            if (!rows.isEmpty()) {
+                draft = joinRuleLines(values());
+            }
+        }
+
+        private String text() {
+            captureDraft();
+            return draft == null ? "" : draft;
+        }
+
+        private void setLines(List<String> values) {
+            List<String> lines = new ArrayList<>();
+            for (String value : values) {
+                if (value != null && !value.trim().isEmpty()) {
+                    lines.add(value.trim());
+                }
+                if (lines.size() >= Config.MAX_WHITELIST_ENTRIES) {
+                    break;
+                }
+            }
+            if (defaultOre && lines.isEmpty()) {
+                lines.add("*ore");
+            }
+            if (lines.size() < WHITELIST_MAX_ROWS) {
+                lines.add("");
+            }
+            lineCount = lines.size();
+            draft = joinRuleLines(lines);
+            for (int index = 0; index < rows.size(); index++) {
+                rows.get(index).setValue(index < lineCount ? lines.get(index) : "");
+            }
+            scrollRow = Math.min(scrollRow, maxScroll());
+            layoutRows();
+            updateSaveButton();
+        }
+
+        private void updateSelectionButton() {
+            if (selectionButton != null) {
+                selectionButton.active = Config.parseWhitelistText(text()).size() < Config.MAX_WHITELIST_ENTRIES;
+            }
+        }
+
+        private void removeEntry(int index) {
+            if (index >= 0 && index < lineCount) {
+                List<String> values = values();
+                values.remove(index);
+                setLines(values);
+            }
+        }
+
+        private int maxScroll() {
+            return Math.max(0, lineCount - WHITELIST_VISIBLE_ROWS);
+        }
+
+        private void layoutRows() {
+            int outerOffset = (int) Math.round(scrollOffset);
+            int innerOffset = scrollRow * WHITELIST_ROW_HEIGHT;
+            for (int index = 0; index < rows.size(); index++) {
+                EditBox row = rows.get(index);
+                Button removeButton = removeButtons.get(index);
+                int y = baseY + index * WHITELIST_ROW_HEIGHT - innerOffset - outerOffset;
+                row.setX(x);
+                row.setY(y);
+                removeButton.setX(removeX);
+                removeButton.setY(y);
+                boolean visible = index < lineCount
+                        && y + WHITELIST_ROW_HEIGHT > viewportTop && y < viewportBottom
+                        && y + WHITELIST_ROW_HEIGHT > baseY - outerOffset && y < bottom - outerOffset;
+                row.setVisible(visible);
+                removeButton.visible = visible;
+                removeButton.active = visible;
+            }
+        }
+
+        private boolean insideViewport(double mouseX, double mouseY) {
+            int offset = (int) Math.round(scrollOffset);
+            return mouseX >= x && mouseX < removeX + WHITELIST_CONTROL_WIDTH
+                    && mouseY >= baseY - offset && mouseY < bottom - offset
+                    && mouseY >= viewportTop && mouseY < viewportBottom;
+        }
+
+        private boolean scroll(double delta) {
+            int next = Mth.clamp(scrollRow + (delta > 0.0D ? -1 : 1), 0, maxScroll());
+            if (delta == 0.0D || next == scrollRow) {
+                return false;
+            }
+            captureDraft();
+            scrollRow = next;
+            layoutRows();
+            return true;
+        }
+
+        private void drawLabel(GuiGraphics graphics) {
+            int y = baseY - (int) Math.round(scrollOffset);
+            String label = Component.translatable(translationKey).getString();
+            graphics.drawString(font, font.plainSubstrByWidth(label, labelWidth), labelX, y + 6, TEXT_COLOR, false);
+        }
+
+        private void drawScrollbar(GuiGraphics graphics) {
+            int max = maxScroll();
+            if (max <= 0) {
+                return;
+            }
+            int offset = (int) Math.round(scrollOffset);
+            int top = Math.max(viewportTop, baseY - offset);
+            int visibleBottom = Math.min(viewportBottom, bottom - offset);
+            if (visibleBottom <= top) {
+                return;
+            }
+            int trackX = x + width + 2;
+            int trackHeight = visibleBottom - top;
+            int thumbHeight = Math.max(12, trackHeight * WHITELIST_VISIBLE_ROWS / lineCount);
+            int travel = Math.max(0, trackHeight - thumbHeight);
+            int thumbY = top + (int) Math.round(travel * (double) scrollRow / max);
+            graphics.fill(trackX, top, trackX + 2, visibleBottom, PANEL_BORDER_COLOR);
+            graphics.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, ACCENT_COLOR);
+        }
     }
 
     private final class StyledButton extends Button {

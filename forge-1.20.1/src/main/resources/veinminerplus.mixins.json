@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.extrarawstyle.veinminerplus.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "Ae2WirelessTerminalsPickupMixin",
+    "Ae2BypassDropMergeMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
